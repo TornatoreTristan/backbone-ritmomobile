@@ -12,7 +12,8 @@
       "supportsTablet": true
     },
     "android": {
-      "adaptiveIcon": {
+      "package": "com.backbone.ritmomobile",
+"adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
@@ -38,11 +39,20 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "@react-native-google-signin/google-signin",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "27eeab48-faa1-44ed-93a9-5b8e8f752def"
+      }
+    },
+    "owner": "tristantornatore"
   }
 }

@@ -7,28 +7,56 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
         tabBarButton: HapticTab,
+        tabBarActiveTintColor: palette.foreground,
+        tabBarInactiveTintColor: palette.mutedForeground,
+        tabBarStyle: {
+          backgroundColor: palette.background,
+          borderTopColor: palette.border,
+        },
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '500',
+        },
       }}>
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          title: 'Dossiers',
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="folder.fill" color={color} />,
         }}
       />
       <Tabs.Screen
-        name="explore"
+        name="invoices"
         options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          title: 'Factures',
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="doc.text.fill" color={color} />,
         }}
+      />
+      <Tabs.Screen
+        name="networks"
+        options={{
+          title: 'Réseaux',
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="person.2.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="advisor"
+        options={{
+          title: 'Conseiller',
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="headphones" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="folders/[id]"
+        options={{ href: null }}
       />
     </Tabs>
   );

@@ -1,0 +1,248 @@
+import { ThemedText } from '@/components/themed-text';
+import { WizardField } from '@/components/wizard/wizard-field';
+import { WizardFooter } from '@/components/wizard/wizard-footer';
+import { WizardScreen } from '@/components/wizard/wizard-screen';
+import { Radius } from '@/constants/theme';
+import { useQuoteWizard } from '@/contexts/quote-wizard-context';
+import { useColors } from '@/hooks/use-theme-color';
+import {
+  PROJECT_TYPE_TO_TRANSACTION,
+  YEAR_RANGE_MAP,
+  calculateGridTotal,
+  normalizePropertyType,
+  suggestDiagnostics,
+} from '@/services/quote-wizard';
+import { useRouter } from 'expo-router';
+import { useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
+
+function generateId(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+export default function Step6Screen() {
+  const router = useRouter();
+  const { state, addDependance, removeDependance, updateDependance, setSuggestions, setGridTotal } =
+    useQuoteWizard();
+  const colors = useColors();
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleNext() {
+    const emptyDeps = state.dependances.filter((d) => d.nom.trim() === '');
+    emptyDeps.forEach((d) => removeDependance(d.id));
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const transactionType = PROJECT_TYPE_TO_TRANSACTION[state.projectType!];
+      const rawPropertyType = state.propertyType ?? '';
+      const propertyType = normalizePropertyType(rawPropertyType);
+
+      const constructionYear = state.exactYear.trim()
+        ? parseInt(state.exactYear, 10)
+        : state.yearRange
+          ? YEAR_RANGE_MAP[state.yearRange]
+          : null;
+
+      const surfaceArea = state.surfaceArea.trim() ? parseFloat(state.surfaceArea) : null;
+      const hasGas = state.hasGas === 'oui';
+
+      const suggestions = await suggestDiagnostics({
+        postalCode: state.postalCode,
+        propertyType,
+        transactionType,
+        constructionYear,
+        surfaceArea,
+        hasGas,
+        hasElectricity: true,
+      });
+
+      setSuggestions(suggestions);
+
+      const gridTotal = await calculateGridTotal({
+        postalCode: state.postalCode,
+        propertyType,
+        diagnosticCount: suggestions.obligatoire.length,
+        ...(surfaceArea !== null ? { surfaceArea } : {}),
+      });
+
+      setGridTotal(gridTotal);
+
+      router.push('/quote-wizard/step-7');
+    } catch {
+      setError('Impossible de récupérer les diagnostics. Vérifiez votre connexion et réessayez.');
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <WizardScreen
+        title="Dépendances"
+        subtitle="Ajoutez les dépendances du bien (caves, garages, etc.) si nécessaire.">
+        {state.dependances.length === 0 ? (
+          <View
+            style={[
+              styles.emptyState,
+              { borderColor: colors.border, backgroundColor: colors.surfaceSubtle },
+            ]}>
+            <ThemedText style={styles.emptyText}>Aucune dépendance ajoutée</ThemedText>
+            <ThemedText type="muted" style={styles.emptyHint}>
+              Appuyez sur « Ajouter » pour en ajouter une.
+            </ThemedText>
+          </View>
+        ) : (
+          <View style={styles.depList}>
+            {state.dependances.map((dep) => (
+              <View
+                key={dep.id}
+                style={[
+                  styles.depCard,
+                  { borderColor: colors.border, backgroundColor: colors.surfaceSubtle },
+                ]}>
+                <View style={styles.depCardHeader}>
+                  <ThemedText style={styles.depCardTitle}>Dépendance</ThemedText>
+                  <Pressable
+                    onPress={() => removeDependance(dep.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Supprimer cette dépendance"
+                    hitSlop={12}
+                    style={({ pressed }) => [styles.deleteButton, pressed && { opacity: 0.5 }]}>
+                    <ThemedText style={styles.deleteIcon}>✕</ThemedText>
+                  </Pressable>
+                </View>
+                <View style={styles.depRow}>
+                  <WizardField
+                    label="Nom"
+                    value={dep.nom}
+                    onChangeText={(t) => updateDependance(dep.id, { nom: t })}
+                    placeholder="Cave, Garage…"
+                    accessibilityLabel="Nom de la dépendance"
+                    containerStyle={styles.flex}
+                  />
+                  <WizardField
+                    label="Surface (m²)"
+                    value={dep.superficie}
+                    onChangeText={(t) => updateDependance(dep.id, { superficie: t })}
+                    keyboardType="decimal-pad"
+                    placeholder="15"
+                    accessibilityLabel="Surface de la dépendance en m²"
+                    containerStyle={styles.smallField}
+                  />
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+
+        <Pressable
+          onPress={() => addDependance({ id: generateId(), nom: '', superficie: '' })}
+          accessibilityRole="button"
+          accessibilityLabel="Ajouter une dépendance"
+          style={({ pressed }) => [
+            styles.addButton,
+            { borderColor: colors.foreground, opacity: pressed ? 0.65 : 1 },
+          ]}>
+          <ThemedText style={[styles.addButtonText, { color: colors.foreground }]}>
+            + Ajouter une dépendance
+          </ThemedText>
+        </Pressable>
+
+        {error ? (
+          <View
+            style={[
+              styles.errorContainer,
+              {
+                backgroundColor: colors.destructive + '18',
+                borderColor: colors.destructive,
+              },
+            ]}>
+            <ThemedText style={[styles.errorText, { color: colors.destructive }]}>
+              {error}
+            </ThemedText>
+            <Pressable
+              onPress={handleNext}
+              accessibilityRole="button"
+              accessibilityLabel="Réessayer"
+              style={[styles.retryButton, { borderColor: colors.foreground }]}>
+              <ThemedText style={[styles.retryText, { color: colors.foreground }]}>
+                Réessayer
+              </ThemedText>
+            </Pressable>
+          </View>
+        ) : null}
+      </WizardScreen>
+
+      <WizardFooter
+        onBack={() => router.back()}
+        onNext={handleNext}
+        loading={isLoading}
+      />
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  emptyState: {
+    padding: 24,
+    borderRadius: Radius.lg,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    gap: 6,
+  },
+  emptyText: { fontSize: 14, opacity: 0.7 },
+  emptyHint: { fontSize: 13, textAlign: 'center' },
+  depList: { gap: 12 },
+  depCard: {
+    borderRadius: Radius.lg,
+    borderWidth: 1.5,
+    padding: 14,
+    gap: 12,
+  },
+  depCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  depCardTitle: { fontSize: 13, fontWeight: '600', opacity: 0.65 },
+  deleteButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteIcon: { fontSize: 14, opacity: 0.6 },
+  depRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-end' },
+  flex: { flex: 1 },
+  smallField: { width: 110 },
+  addButton: {
+    paddingVertical: 14,
+    borderRadius: Radius.lg,
+    borderWidth: 1.5,
+    alignItems: 'center',
+  },
+  addButtonText: { fontSize: 15, fontWeight: '500' },
+  errorContainer: {
+    gap: 10,
+    padding: 14,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+  },
+  errorText: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  retryButton: {
+    paddingVertical: 8,
+    borderRadius: Radius.md,
+    borderWidth: 1.5,
+    alignItems: 'center',
+  },
+  retryText: { fontSize: 14, fontWeight: '500' },
+});

@@ -22,8 +22,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const FORGOT_PASSWORD_URL = 'https://backbone.ritmodiag.com/forgot-password';
-const TERMS_URL = 'https://backbone.ritmodiag.com/cgu';
-const PRIVACY_URL = 'https://backbone.ritmodiag.com/confidentialite';
+const PARTNER_ONBOARDING_URL = 'https://backbone.ritmodiag.com/partner/onboarding';
+const TERMS_URL = 'https://backbone.ritmodiag.com/legal/terms';
+const PRIVACY_URL = 'https://backbone.ritmodiag.com/legal/privacy';
 
 export default function LoginScreen() {
   const { signInWithGoogle, signInWithApple, signInWithEmail, isLoading } = useAuth();
@@ -90,6 +91,12 @@ export default function LoginScreen() {
   function handleForgotPassword() {
     Linking.openURL(FORGOT_PASSWORD_URL).catch(() => {
       setError("Impossible d'ouvrir la page de réinitialisation.");
+    });
+  }
+
+  function handlePartnerOnboarding() {
+    Linking.openURL(PARTNER_ONBOARDING_URL).catch(() => {
+      setError("Impossible d'ouvrir la page de première connexion.");
     });
   }
 
@@ -233,6 +240,25 @@ export default function LoginScreen() {
                   Continuer avec Google
                 </Button>
 
+                <View
+                  style={[
+                    styles.partnerBox,
+                    { borderColor: colors.border, backgroundColor: colors.card },
+                  ]}>
+                  <ThemedText type="muted" style={styles.partnerText}>
+                    Vous êtes partenaire et c&apos;est votre première connexion ?
+                  </ThemedText>
+                  <Pressable
+                    onPress={handlePartnerOnboarding}
+                    disabled={busy}
+                    accessibilityRole="link"
+                    accessibilityLabel="Première connexion partenaire">
+                    <ThemedText type="link" style={styles.partnerLink}>
+                      Cliquez ici
+                    </ThemedText>
+                  </Pressable>
+                </View>
+
                 {error ? (
                   <ThemedText tone="destructive" style={styles.error}>
                     {error}
@@ -374,6 +400,21 @@ const styles = StyleSheet.create({
         elevation: 1,
       },
     }),
+  },
+  partnerBox: {
+    marginTop: 20,
+    padding: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: Radius.md,
+    alignItems: 'center',
+    gap: 4,
+  },
+  partnerText: {
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  partnerLink: {
+    fontSize: 13,
   },
   error: {
     marginTop: 14,

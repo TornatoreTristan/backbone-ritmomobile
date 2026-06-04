@@ -47,7 +47,24 @@ async function buildHeaders(
 }
 
 async function parseResponse<T>(response: Response, authenticated: boolean): Promise<T> {
-  const data = await response.json();
+  const hasBody =
+    response.status !== 204 &&
+    response.status !== 205 &&
+    response.headers.get('content-length') !== '0';
+
+  let data: unknown = null;
+  if (hasBody) {
+    const text = await response.text();
+    if (text.length > 0) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        // Body présent mais non-JSON (ex: page d'erreur HTML) — on garde le texte brut
+        data = text;
+      }
+    }
+  }
+
   if (!response.ok) {
     if (response.status === 401 && authenticated) {
       onUnauthorized?.();
@@ -95,7 +112,9 @@ async function performFetch<T>(
     const response = await fetch(`${API_URL}${endpoint}`, { ...init, signal });
     return await parseResponse<T>(response, authenticated);
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
+    const isAbort =
+      err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
+    if (isAbort) {
       if (externalSignal?.aborted) {
         throw err;
       }

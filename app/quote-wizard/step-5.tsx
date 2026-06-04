@@ -26,7 +26,6 @@ export default function Step5Screen() {
       <WizardScreen
         title="Installation gaz"
         subtitle="Le bien dispose-t-il d'une installation au gaz ?"
-        keyboardAvoiding={false}
         contentStyle={{ gap: 10 }}>
         {OPTIONS.map((option) => (
           <RadioCard

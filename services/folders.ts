@@ -1,4 +1,5 @@
 import { apiRequest, apiUpload } from '@/services/api';
+import { normalizeForSearch } from '@/services/search';
 
 export type FolderStatus = 'draft' | 'lead' | 'deal' | 'archived';
 
@@ -29,6 +30,15 @@ export type Folder = {
   createdAt: string;
   updatedAt: string;
 };
+
+export function folderMatchesQuery(folder: Folder, normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true;
+  return (
+    normalizeForSearch(folder.reference).includes(normalizedQuery) ||
+    normalizeForSearch(folder.clientName).includes(normalizedQuery) ||
+    normalizeForSearch(folder.propertyAddress).includes(normalizedQuery)
+  );
+}
 
 export type QuoteStatus =
   | 'draft'

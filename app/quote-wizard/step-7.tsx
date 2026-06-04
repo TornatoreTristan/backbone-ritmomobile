@@ -2,6 +2,7 @@ import { ThemedText } from '@/components/themed-text';
 import { WizardFooter } from '@/components/wizard/wizard-footer';
 import { WizardScreen } from '@/components/wizard/wizard-screen';
 import { Radius } from '@/constants/theme';
+import { useOrganization } from '@/contexts/organization-context';
 import { selectQuoteTotals, useQuoteWizard } from '@/contexts/quote-wizard-context';
 import { useColors } from '@/hooks/use-theme-color';
 import { calculateGridTotal, normalizePropertyType, type SuggestedProduct } from '@/services/quote-wizard';
@@ -89,6 +90,8 @@ export default function Step7Screen() {
   const router = useRouter();
   const { state, toggleProduct, setGridTotal } = useQuoteWizard();
   const colors = useColors();
+  const { isStaff, currentOrganization } = useOrganization();
+  const staffOrgId = isStaff ? (currentOrganization?.id ?? undefined) : undefined;
 
   const [updatingProductId, setUpdatingProductId] = useState<string | null>(null);
 
@@ -112,7 +115,7 @@ export default function Step7Screen() {
         propertyType,
         diagnosticCount: gridProductCount,
         ...(surfaceArea !== undefined ? { surfaceArea } : {}),
-      });
+      }, staffOrgId);
 
       setGridTotal(gridTotal);
     } catch {
@@ -126,8 +129,7 @@ export default function Step7Screen() {
     <>
       <WizardScreen
         title="Diagnostics"
-        subtitle="Sélectionnez les diagnostics à inclure dans votre devis."
-        keyboardAvoiding={false}>
+        subtitle="Sélectionnez les diagnostics à inclure dans votre devis.">
         {state.suggestionsObligatoire.length > 0 ? (
           <View style={styles.section}>
             <ThemedText style={[styles.sectionTitle, { color: colors.destructive }]}>
@@ -194,7 +196,9 @@ export default function Step7Screen() {
 
       <WizardFooter
         onBack={() => router.back()}
-        onNext={() => router.push('/quote-wizard/step-8')}
+        onNext={() =>
+          router.push(isStaff ? '/quote-wizard/pricing' : '/quote-wizard/step-8')
+        }
       />
     </>
   );

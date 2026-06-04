@@ -2,9 +2,10 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Radius } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
+import { useOrganization } from '@/contexts/organization-context';
 import { useColors } from '@/hooks/use-theme-color';
 import { useRouter } from 'expo-router';
-import { Image, Pressable, StyleSheet, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Switch, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 function getInitials(fullName: string | null | undefined): string {
@@ -18,10 +19,19 @@ export default function SettingsModal() {
   const { user, signOut } = useAuth();
   const colors = useColors();
   const router = useRouter();
+  const { roleOverride, setRoleOverride } = useOrganization();
 
   async function handleSignOut() {
     await signOut();
     router.dismissAll();
+  }
+
+  async function handleToggleTechnician(enabled: boolean) {
+    await setRoleOverride(enabled ? 'technician' : null);
+  }
+
+  async function handleToggleStaff(enabled: boolean) {
+    await setRoleOverride(enabled ? 'staff' : null);
   }
 
   return (
@@ -60,6 +70,49 @@ export default function SettingsModal() {
 
         <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
+        {__DEV__ ? (
+          <>
+            <View style={styles.section}>
+              <ThemedText type="label" tone="mutedForeground" style={styles.sectionLabel}>
+                DÉVELOPPEUR
+              </ThemedText>
+              <View
+                style={[
+                  styles.row,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}>
+                <View style={styles.rowText}>
+                  <ThemedText type="defaultSemiBold">Forcer mode technicien</ThemedText>
+                  <ThemedText type="caption" tone="mutedForeground">
+                    Override local du rôle pour tester l&apos;app technicien.
+                  </ThemedText>
+                </View>
+                <Switch
+                  value={roleOverride === 'technician'}
+                  onValueChange={handleToggleTechnician}
+                />
+              </View>
+              <View
+                style={[
+                  styles.row,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}>
+                <View style={styles.rowText}>
+                  <ThemedText type="defaultSemiBold">Forcer mode staff</ThemedText>
+                  <ThemedText type="caption" tone="mutedForeground">
+                    Override local du rôle pour tester l&apos;app staff interne.
+                  </ThemedText>
+                </View>
+                <Switch
+                  value={roleOverride === 'staff'}
+                  onValueChange={handleToggleStaff}
+                />
+              </View>
+            </View>
+            <View style={[styles.divider, { backgroundColor: colors.border }]} />
+          </>
+        ) : null}
+
         <View style={styles.actions}>
           <Pressable
             onPress={handleSignOut}
@@ -72,6 +125,19 @@ export default function SettingsModal() {
             ]}>
             <ThemedText type="defaultSemiBold" tone="destructive">
               Se déconnecter
+            </ThemedText>
+          </Pressable>
+
+          <Pressable
+            onPress={() => router.push('/delete-account')}
+            accessibilityRole="button"
+            accessibilityLabel="Supprimer mon compte"
+            style={({ pressed }) => [
+              styles.deleteLink,
+              pressed && styles.actionPressed,
+            ]}>
+            <ThemedText type="caption" tone="mutedForeground" style={styles.deleteLinkText}>
+              Supprimer mon compte
             </ThemedText>
           </Pressable>
         </View>
@@ -113,6 +179,26 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     marginHorizontal: 20,
   },
+  section: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  sectionLabel: {
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+  },
+  rowText: { flex: 1, gap: 2 },
   actions: {
     paddingHorizontal: 20,
     paddingTop: 16,
@@ -126,4 +212,12 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   actionPressed: { opacity: 0.85 },
+  deleteLink: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  deleteLinkText: {
+    textDecorationLine: 'underline',
+  },
 });

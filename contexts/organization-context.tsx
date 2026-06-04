@@ -5,7 +5,12 @@ import {
   getCurrentOrgId,
   saveCurrentOrgId,
 } from '@/services/organization-storage';
-import { createContext, useContext, useEffect, useState, type PropsWithChildren } from 'react';
+import {
+  getRoleOverride,
+  setRoleOverride as persistRoleOverride,
+  type RoleOverride,
+} from '@/services/role-storage';
+import { createContext, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react';
 
 type OrganizationContextType = {
   organizations: Organization[];
@@ -14,6 +19,14 @@ type OrganizationContextType = {
   error: string | null;
   switchOrganization: (id: string) => Promise<void>;
   refresh: () => Promise<void>;
+  /** Effective roles for the current org, after applying any dev override. */
+  effectiveRoles: string[];
+  isTechnician: boolean;
+  isPartner: boolean;
+  isStaff: boolean;
+  /** Dev-only role override (null = no override, use backend roles). */
+  roleOverride: RoleOverride;
+  setRoleOverride: (role: RoleOverride) => Promise<void>;
 };
 
 const OrganizationContext = createContext<OrganizationContextType>({
@@ -23,6 +36,12 @@ const OrganizationContext = createContext<OrganizationContextType>({
   error: null,
   switchOrganization: async () => {},
   refresh: async () => {},
+  effectiveRoles: [],
+  isTechnician: false,
+  isPartner: false,
+  isStaff: false,
+  roleOverride: null,
+  setRoleOverride: async () => {},
 });
 
 export function useOrganization() {
@@ -35,6 +54,7 @@ export function OrganizationProvider({ children }: PropsWithChildren) {
   const [currentOrganization, setCurrentOrganization] = useState<Organization | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [roleOverride, setRoleOverrideState] = useState<RoleOverride>(null);
 
   useEffect(() => {
     if (!user) {
@@ -44,6 +64,7 @@ export function OrganizationProvider({ children }: PropsWithChildren) {
       return;
     }
     loadOrganizations();
+    getRoleOverride().then(setRoleOverrideState);
   }, [user]);
 
   async function loadOrganizations() {
@@ -84,9 +105,40 @@ export function OrganizationProvider({ children }: PropsWithChildren) {
     await loadOrganizations();
   }
 
+  async function setRoleOverride(role: RoleOverride) {
+    await persistRoleOverride(role);
+    setRoleOverrideState(role);
+  }
+
+  const effectiveRoles = useMemo<string[]>(() => {
+    if (roleOverride) return [roleOverride];
+    return currentOrganization?.roles ?? [];
+  }, [currentOrganization, roleOverride]);
+
+  const isTechnician = effectiveRoles.includes('technician');
+  const isPartner = effectiveRoles.includes('partner');
+  // isStaff = true si l'utilisateur possède au moins un rôle staff (ni partner ni technician),
+  // même s'il est aussi partner. Un partner pur ou technicien pur reste false.
+  const isStaff =
+    !isTechnician &&
+    effectiveRoles.some((role) => role !== 'partner' && role !== 'technician');
+
   return (
     <OrganizationContext.Provider
-      value={{ organizations, currentOrganization, isLoading, error, switchOrganization, refresh }}>
+      value={{
+        organizations,
+        currentOrganization,
+        isLoading,
+        error,
+        switchOrganization,
+        refresh,
+        effectiveRoles,
+        isTechnician,
+        isPartner,
+        isStaff,
+        roleOverride,
+        setRoleOverride,
+      }}>
       {children}
     </OrganizationContext.Provider>
   );

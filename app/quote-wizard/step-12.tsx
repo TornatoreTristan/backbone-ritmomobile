@@ -4,9 +4,14 @@ import { WizardFooter } from '@/components/wizard/wizard-footer';
 import { WizardScreen } from '@/components/wizard/wizard-screen';
 import { Radius, type ColorTokens } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
+import { useOrganization } from '@/contexts/organization-context';
 import { selectQuoteTotals, useQuoteWizard } from '@/contexts/quote-wizard-context';
 import { useColors } from '@/hooks/use-theme-color';
-import { buildSubmitPayload, submitQuoteWizard } from '@/services/quote-wizard';
+import {
+  buildSubmitPayload,
+  submitQuoteWizard,
+  submitStaffQuoteWizard,
+} from '@/services/quote-wizard';
 import { validateAllSteps } from '@/services/quote-wizard-validation';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
@@ -114,6 +119,7 @@ export default function Step12Screen() {
   const router = useRouter();
   const { state, update, resetAndClear } = useQuoteWizard();
   const { user } = useAuth();
+  const { isStaff, currentOrganization } = useOrganization();
   const colors = useColors();
 
   const [isLoading, setIsLoading] = useState(false);
@@ -130,7 +136,55 @@ export default function Step12Screen() {
   const clientEmail = state.newContactEmail.trim();
   const hasClientEmail = clientEmail !== '';
 
-  async function submitFolder(sendQuoteToClient: boolean) {
+  async function submitStaffFolder() {
+    if (!currentOrganization) {
+      setSubmitError("Aucune organisation sélectionnée. Impossible de créer le dossier.");
+      return;
+    }
+    setSubmitError(null);
+    const overallValidation = validateAllSteps(state);
+    if (!overallValidation.valid) {
+      setSubmitError(
+        `Informations manquantes ou invalides à l'étape « ${overallValidation.stepLabel} ». Veuillez vérifier avant de soumettre.`,
+      );
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const payload = buildSubmitPayload(
+        state,
+        { fullName: user?.fullName, email: user?.email },
+        false,
+        true,
+      );
+      const result = await submitStaffQuoteWizard(currentOrganization.id, payload);
+      Alert.alert(
+        'Dossier créé',
+        `Référence : ${result.reference}`,
+        [
+          {
+            text: 'OK',
+            onPress: async () => {
+              await resetAndClear();
+              router.dismissAll();
+              router.replace(`/folders/${result.id}` as never);
+            },
+          },
+        ],
+        { cancelable: false },
+      );
+    } catch (err: unknown) {
+      let message = 'Une erreur est survenue. Veuillez réessayer.';
+      if (err instanceof Error && err.message) {
+        message = err.message;
+      }
+      setSubmitError(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function submitPartnerFolder(sendQuoteToClient: boolean) {
     setSubmitError(null);
     const overallValidation = validateAllSteps(state);
     if (!overallValidation.valid) {
@@ -178,8 +232,12 @@ export default function Step12Screen() {
   }
 
   function handleSubmit() {
+    if (isStaff) {
+      submitStaffFolder();
+      return;
+    }
     if (!hasClientEmail) {
-      submitFolder(false);
+      submitPartnerFolder(false);
       return;
     }
     Alert.alert(
@@ -187,8 +245,8 @@ export default function Step12Screen() {
       `Un email avec le devis sera envoyé à ${clientEmail}.`,
       [
         { text: 'Annuler', style: 'cancel' },
-        { text: 'Sans envoi', onPress: () => submitFolder(false) },
-        { text: 'Envoyer', style: 'default', onPress: () => submitFolder(true) },
+        { text: 'Sans envoi', onPress: () => submitPartnerFolder(false) },
+        { text: 'Envoyer', style: 'default', onPress: () => submitPartnerFolder(true) },
       ],
     );
   }
@@ -396,6 +454,35 @@ export default function Step12Screen() {
             </>
           )}
         </Section>
+
+        {isStaff && (state.staffFinalPriceTtc.trim() !== '' || state.staffOriginalPriceTtc.trim() !== '' || state.staffDiscountPercent.trim() !== '') ? (
+          <Section title="Prix ajusté" colors={colors}>
+            {state.staffFinalPriceTtc.trim() !== '' ? (
+              <Row
+                label="Prix final TTC"
+                value={`${parseFloat(state.staffFinalPriceTtc).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}`}
+              />
+            ) : null}
+            {state.staffOriginalPriceTtc.trim() !== '' ? (
+              <Row
+                label="Prix barré TTC"
+                value={`${parseFloat(state.staffOriginalPriceTtc).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}`}
+              />
+            ) : null}
+            {state.staffDiscountPercent.trim() !== '' ? (
+              <Row label="Remise" value={`${state.staffDiscountPercent.trim()} %`} />
+            ) : null}
+          </Section>
+        ) : null}
+
+        {isStaff && state.staffRdvDate ? (
+          <Section title="Rendez-vous planifié" colors={colors}>
+            <Row label="Date" value={state.staffRdvDate} />
+            {state.staffRdvDurationMinutes.trim() !== '' ? (
+              <Row label="Durée" value={`${state.staffRdvDurationMinutes.trim()} min`} />
+            ) : null}
+          </Section>
+        ) : null}
 
         <WizardField
           label="Commentaires"

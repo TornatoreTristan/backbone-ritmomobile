@@ -118,6 +118,14 @@ export type WizardState = {
   billingPostalCode: string;
   billingCity: string;
   clientComments: string;
+
+  // Staff-only fields (empty/null by default — retro-compatible with partner flow)
+  staffOriginalPriceTtc: string;
+  staffFinalPriceTtc: string;
+  staffDiscountPercent: string;
+  staffRdvDate: string | null;
+  staffRdvDurationMinutes: string;
+  staffTechnicianIds: string[];
 };
 
 const INITIAL_STATE: WizardState = {
@@ -175,6 +183,14 @@ const INITIAL_STATE: WizardState = {
   billingPostalCode: '',
   billingCity: '',
   clientComments: '',
+
+  // Staff-only fields
+  staffOriginalPriceTtc: '',
+  staffFinalPriceTtc: '',
+  staffDiscountPercent: '',
+  staffRdvDate: null,
+  staffRdvDurationMinutes: '',
+  staffTechnicianIds: [],
 };
 
 type WizardContextType = {

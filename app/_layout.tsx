@@ -2,6 +2,7 @@ import { DarkTheme, DefaultTheme, ThemeProvider, type Theme } from '@react-navig
 import * as Sentry from '@sentry/react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { KeyboardProvider, KeyboardToolbar } from 'react-native-keyboard-controller';
 import 'react-native-reanimated';
 
 import { SENTRY_DSN } from '@/constants/api';
@@ -56,29 +57,40 @@ function RootLayout() {
 
   return (
     <ThemeProvider value={isDark ? NAV_DARK_THEME : NAV_LIGHT_THEME}>
-      <ErrorBoundary>
-        <AuthProvider>
-          <OrganizationProvider>
-            <Stack>
-              <Stack.Screen name="login" options={{ headerShown: false }} />
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-              <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-              <Stack.Screen
-                name="switch-organization"
-                options={{ presentation: 'modal', title: 'Mes organisations' }}
-              />
-              <Stack.Screen
-                name="settings"
-                options={{ presentation: 'modal', title: 'Paramètres' }}
-              />
-              <Stack.Screen
-                name="quote-wizard"
-                options={{ presentation: 'modal', headerShown: false }}
-              />
-            </Stack>
-          </OrganizationProvider>
-        </AuthProvider>
-      </ErrorBoundary>
+      <KeyboardProvider>
+        <ErrorBoundary>
+          <AuthProvider>
+            <OrganizationProvider>
+              <Stack>
+                <Stack.Screen name="login" options={{ headerShown: false }} />
+                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+                <Stack.Screen
+                  name="switch-organization"
+                  options={{ presentation: 'modal', title: 'Mes organisations' }}
+                />
+                <Stack.Screen
+                  name="settings"
+                  options={{ presentation: 'modal', title: 'Paramètres' }}
+                />
+                <Stack.Screen
+                  name="delete-account"
+                  options={{ presentation: 'modal', title: 'Supprimer mon compte' }}
+                />
+                <Stack.Screen
+                  name="search"
+                  options={{ presentation: 'modal', title: 'Rechercher' }}
+                />
+                <Stack.Screen
+                  name="quote-wizard"
+                  options={{ presentation: 'modal', headerShown: false }}
+                />
+              </Stack>
+            </OrganizationProvider>
+          </AuthProvider>
+        </ErrorBoundary>
+        <KeyboardToolbar />
+      </KeyboardProvider>
       <StatusBar style={isDark ? 'light' : 'dark'} />
     </ThemeProvider>
   );

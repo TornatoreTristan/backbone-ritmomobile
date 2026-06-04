@@ -97,11 +97,11 @@ type BdnbSearchResponse = {
   data: BdnbSearchResult;
 };
 
-export async function bdnbSearch(payload: BdnbSearchPayload): Promise<BdnbSearchResult> {
-  const response = await apiRequest<BdnbSearchResponse>(
-    '/api/v1/folders/wizard/bdnb-search',
-    { method: 'POST', body: payload },
-  );
+export async function bdnbSearch(payload: BdnbSearchPayload, orgId?: string): Promise<BdnbSearchResult> {
+  const endpoint = orgId
+    ? `/api/v1/organizations/${orgId}/folders/wizard/bdnb-search`
+    : '/api/v1/folders/wizard/bdnb-search';
+  const response = await apiRequest<BdnbSearchResponse>(endpoint, { method: 'POST', body: payload });
   return response.data;
 }
 
@@ -120,11 +120,11 @@ type SuggestResponse = {
   data: SuggestionsResult;
 };
 
-export async function suggestDiagnostics(payload: SuggestPayload): Promise<SuggestionsResult> {
-  const response = await apiRequest<SuggestResponse>(
-    '/api/v1/folders/wizard/suggest',
-    { method: 'POST', body: payload },
-  );
+export async function suggestDiagnostics(payload: SuggestPayload, orgId?: string): Promise<SuggestionsResult> {
+  const endpoint = orgId
+    ? `/api/v1/organizations/${orgId}/folders/wizard/suggest`
+    : '/api/v1/folders/wizard/suggest';
+  const response = await apiRequest<SuggestResponse>(endpoint, { method: 'POST', body: payload });
   return response.data;
 }
 
@@ -141,11 +141,11 @@ type GridTotalResponse = {
   data: GridTotalResult;
 };
 
-export async function calculateGridTotal(payload: GridTotalPayload): Promise<GridTotalResult> {
-  const response = await apiRequest<GridTotalResponse>(
-    '/api/v1/folders/wizard/calculate-grid-total',
-    { method: 'POST', body: payload },
-  );
+export async function calculateGridTotal(payload: GridTotalPayload, orgId?: string): Promise<GridTotalResult> {
+  const endpoint = orgId
+    ? `/api/v1/organizations/${orgId}/folders/wizard/calculate-grid-total`
+    : '/api/v1/folders/wizard/calculate-grid-total';
+  const response = await apiRequest<GridTotalResponse>(endpoint, { method: 'POST', body: payload });
   return response.data;
 }
 
@@ -199,6 +199,14 @@ export type WizardSubmitPayload = {
   }[];
   clientComments: string | null;
   sendQuoteToClient: boolean;
+
+  // Staff-only optional fields
+  originalPriceTtc?: number | null;
+  finalPriceTtc?: number | null;
+  discountPercent?: number | null;
+  rdvDate?: string | null;
+  rdvDuration?: number | null;
+  technicians?: string[];
 };
 
 export type WizardSubmitResult = {
@@ -209,6 +217,11 @@ export type WizardSubmitResult = {
   contactId: string | null;
   finalPriceTtc: number;
   quoteEmailSent?: boolean;
+};
+
+export type StaffWizardSubmitResult = {
+  id: string;
+  reference: string;
 };
 
 type WizardSubmitResponse = {
@@ -226,6 +239,22 @@ export async function submitQuoteWizard(
   return response.data;
 }
 
+type StaffWizardSubmitResponse = {
+  success: true;
+  data: StaffWizardSubmitResult;
+};
+
+export async function submitStaffQuoteWizard(
+  orgId: string,
+  payload: WizardSubmitPayload,
+): Promise<StaffWizardSubmitResult> {
+  const response = await apiRequest<StaffWizardSubmitResponse>(
+    `/api/v1/organizations/${orgId}/folders/wizard`,
+    { method: 'POST', body: payload },
+  );
+  return response.data;
+}
+
 // ---------------------------------------------------------------------------
 // Build payload from wizard state
 // ---------------------------------------------------------------------------
@@ -234,10 +263,25 @@ function nullIfEmpty(s: string): string | null {
   return s.trim() === '' ? null : s.trim();
 }
 
+function nullableFloat(s: string): number | null {
+  const trimmed = s.trim();
+  if (trimmed === '') return null;
+  const parsed = parseFloat(trimmed);
+  return isNaN(parsed) ? null : parsed;
+}
+
+function nullableInt(s: string): number | null {
+  const trimmed = s.trim();
+  if (trimmed === '') return null;
+  const parsed = parseInt(trimmed, 10);
+  return isNaN(parsed) ? null : parsed;
+}
+
 export function buildSubmitPayload(
   state: WizardState,
   user: { fullName?: string | null; email?: string | null },
   sendQuoteToClient: boolean,
+  staffMode = false,
 ): WizardSubmitPayload {
   const exactYearNum = state.exactYear.trim()
     ? parseInt(state.exactYear.trim(), 10)
@@ -343,5 +387,15 @@ export function buildSubmitPayload(
     items,
     clientComments: nullIfEmpty(state.clientComments),
     sendQuoteToClient,
+    ...(staffMode
+      ? {
+          originalPriceTtc: nullableFloat(state.staffOriginalPriceTtc),
+          finalPriceTtc: nullableFloat(state.staffFinalPriceTtc),
+          discountPercent: nullableFloat(state.staffDiscountPercent),
+          rdvDate: state.staffRdvDate ?? null,
+          rdvDuration: nullableInt(state.staffRdvDurationMinutes),
+          technicians: state.staffTechnicianIds.length > 0 ? state.staffTechnicianIds : undefined,
+        }
+      : {}),
   };
 }

@@ -9,6 +9,7 @@ import {
   type StoredUser,
 } from '@/services/auth-storage';
 import { clearCurrentOrgId } from '@/services/organization-storage';
+import { setRoleOverride } from '@/services/role-storage';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import * as Sentry from '@sentry/react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
@@ -29,6 +30,7 @@ type AuthContextType = {
   signInWithApple: () => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -38,6 +40,7 @@ const AuthContext = createContext<AuthContextType>({
   signInWithApple: async () => {},
   signInWithEmail: async () => {},
   signOut: async () => {},
+  deleteAccount: async () => {},
 });
 
 type AuthResponse = {
@@ -142,7 +145,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     } catch (error: any) {
       if (error.code === statusCodes.SIGN_IN_CANCELLED) return;
       if (error.code === statusCodes.IN_PROGRESS) return;
-      console.error('Sign-in error:', error);
+      console.error('Sign-in error: ' + (error?.code ?? error?.message ?? 'unknown'));
       throw error;
     }
   }
@@ -187,7 +190,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setUser(response.data.user);
     } catch (error: any) {
       if (error?.code === 'ERR_REQUEST_CANCELED') return;
-      console.error('Apple sign-in error:', error);
+      console.error('Apple sign-in error: ' + (error?.code ?? error?.message ?? 'unknown'));
       throw error;
     }
   }
@@ -216,14 +219,25 @@ export function AuthProvider({ children }: PropsWithChildren) {
     } catch {
       // Continue logout even if requests fail
     } finally {
-      await Promise.all([clearAuth(), clearCurrentOrgId()]);
+      await Promise.all([clearAuth(), clearCurrentOrgId(), setRoleOverride(null)]);
       setUser(null);
     }
   }
 
+  async function deleteAccount() {
+    await apiRequest('/api/v1/me', { method: 'DELETE' });
+    try {
+      await GoogleSignin.signOut();
+    } catch {
+      // ignore — la session locale est purgée juste après
+    }
+    await Promise.all([clearAuth(), clearCurrentOrgId(), setRoleOverride(null)]);
+    setUser(null);
+  }
+
   return (
     <AuthContext.Provider
-      value={{ user, isLoading, signInWithGoogle, signInWithApple, signInWithEmail, signOut }}>
+      value={{ user, isLoading, signInWithGoogle, signInWithApple, signInWithEmail, signOut, deleteAccount }}>
       {children}
     </AuthContext.Provider>
   );

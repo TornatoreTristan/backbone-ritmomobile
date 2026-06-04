@@ -2,7 +2,12 @@ import { apiRequest } from '@/services/api';
 
 export type OrganizationEmployee = {
   id: string;
+  userId: string | null;
   fullName: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  jobTitle?: string | null;
 };
 
 type EmployeesResponse = {

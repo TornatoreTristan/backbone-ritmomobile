@@ -87,6 +87,10 @@ export default function TabLayout() {
         options={{ href: null }}
       />
       <Tabs.Screen
+        name="folders/activities"
+        options={{ href: null }}
+      />
+      <Tabs.Screen
         name="interventions/[id]"
         options={{ href: null }}
       />

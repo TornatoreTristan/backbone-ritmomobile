@@ -7,6 +7,8 @@ import { ThemedView } from '@/components/themed-view';
 import { API_URL } from '@/constants/api';
 import { Radius } from '@/constants/theme';
 import { useColors } from '@/hooks/use-theme-color';
+import { useOrganization } from '@/contexts/organization-context';
+import { FolderDock, type DockKey } from '@/components/folder-dock';
 import { ApiError } from '@/services/api';
 import { centeredContent } from '@/constants/layout';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -352,6 +354,7 @@ export default function FolderDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
   const router = useRouter();
+  const { isStaff } = useOrganization();
 
   const [data, setData] = useState<ScreenData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -498,7 +501,13 @@ export default function FolderDetailScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <BackBar onBack={() => router.back()} />
-        <ScrollView contentContainerStyle={[styles.scrollContent, centeredContent]} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            centeredContent,
+            isStaff && styles.scrollContentStaff,
+          ]}
+          showsVerticalScrollIndicator={false}>
         <FolderHeader folder={folder} />
 
         <ProgressTimeline folder={folder} reports={reports} />
@@ -628,6 +637,19 @@ export default function FolderDetailScreen() {
           )}
         </Section>
         </ScrollView>
+        {isStaff ? (
+          <FolderDock
+            active="infos"
+            onSelect={(key: DockKey) => {
+              if (key !== 'infos') {
+                router.push({
+                  pathname: '/folders/activities',
+                  params: { folderId: folder.id, tab: key },
+                });
+              }
+            }}
+          />
+        ) : null}
       </SafeAreaView>
     </ThemedView>
   );
@@ -1159,6 +1181,9 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 40,
     gap: 12,
+  },
+  scrollContentStaff: {
+    paddingBottom: 110,
   },
   header: {
     paddingTop: 4,

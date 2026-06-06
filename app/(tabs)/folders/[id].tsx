@@ -15,17 +15,22 @@ import {
   type FolderDetail,
   type FolderFile,
   type FolderFileCategory,
+  type FolderInterventionSummary,
   type FolderInvoiceSummary,
   type FolderQuoteSummary,
+  type FolderReport,
   type FolderStatus,
+  type InterventionStatus,
   type InvoiceStatus,
   type QuoteStatus,
   getFolderById,
   getFolderFiles,
+  getFolderReports,
   uploadFolderFile,
 } from '@/services/folders';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
+import * as WebBrowser from 'expo-web-browser';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -119,11 +124,44 @@ const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
   refunded: 'Remboursée',
 };
 
+const INTERVENTION_STATUS_TONE: Record<InterventionStatus, BadgeTone> = {
+  scheduled: 'info',
+  confirmed: 'info',
+  in_progress: 'warning',
+  completed: 'success',
+  cancelled: 'destructive',
+  rescheduled: 'warning',
+};
+
+const INTERVENTION_STATUS_LABELS: Record<InterventionStatus, string> = {
+  scheduled: 'Planifiée',
+  confirmed: 'Confirmée',
+  in_progress: 'En cours',
+  completed: 'Terminée',
+  cancelled: 'Annulée',
+  rescheduled: 'Reprogrammée',
+};
+
 const dateFormatter = new Intl.DateTimeFormat('fr-FR', {
   day: '2-digit',
   month: '2-digit',
   year: 'numeric',
 });
+
+const dateTimeFormatter = new Intl.DateTimeFormat('fr-FR', {
+  weekday: 'long',
+  day: '2-digit',
+  month: 'long',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+function formatDateTime(iso: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return null;
+  return dateTimeFormatter.format(date);
+}
 
 function formatDate(iso: string | null): string | null {
   if (!iso) return null;
@@ -134,6 +172,11 @@ function formatDate(iso: string | null): string | null {
 
 function formatAmount(value: number): string {
   return priceFormatter.format(value);
+}
+
+function formatPercent(value: number): string {
+  const rounded = Number.isInteger(value) ? String(value) : value.toFixed(1);
+  return `${rounded}%`;
 }
 
 const priceFormatter = new Intl.NumberFormat('fr-FR', {
@@ -154,6 +197,78 @@ function formatClientAddress(folder: FolderDetail): string | null {
     return cityPart ? `${folder.clientAddress}, ${cityPart}` : folder.clientAddress;
   }
   return cityPart || null;
+}
+
+function pickMainIntervention(
+  interventions: FolderInterventionSummary[],
+): FolderInterventionSummary | null {
+  if (interventions.length === 0) return null;
+  const completed = interventions.filter((i) => i.status === 'completed');
+  if (completed.length > 0) return completed[completed.length - 1];
+  const active = interventions.filter((i) => i.status !== 'cancelled');
+  return active[0] ?? interventions[0];
+}
+
+function formatDuration(minutes: number): string | null {
+  if (!minutes || minutes <= 0) return null;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours === 0) return `${mins} min`;
+  if (mins === 0) return `${hours} h`;
+  return `${hours} h ${mins}`;
+}
+
+type StepState = 'done' | 'current' | 'upcoming';
+
+type ProgressStep = {
+  key: string;
+  label: string;
+  date: string | null;
+  reached: boolean;
+};
+
+/**
+ * Suivi d'avancement — repris du portail web partenaire (Créé → Devis →
+ * Intervention → Rapport → Réglé). On le dérive des données exposées au mobile :
+ * devis, factures payées et rapports (fichiers diagnostic).
+ */
+function buildSteps(folder: FolderDetail, reports: FolderReport[]): ProgressStep[] {
+  const hasQuote = folder.quotes.length > 0;
+  const hasReport = reports.length > 0;
+  const isPaid =
+    folder.paidAt != null || folder.invoices.some((invoice) => invoice.status === 'paid');
+
+  const interventions = folder.interventions ?? [];
+  const mainIntervention = pickMainIntervention(interventions);
+  const interventionDone = interventions.some((i) => i.status === 'completed');
+  const interventionReached =
+    interventions.length > 0 && (interventionDone || hasReport || isPaid);
+  const interventionDate = formatDate(
+    mainIntervention?.completedAt ?? mainIntervention?.scheduledAt ?? null,
+  );
+
+  return [
+    { key: 'created', label: 'Créé', date: formatDate(folder.createdAt), reached: true },
+    {
+      key: 'quote',
+      label: 'Devis',
+      date: hasQuote ? formatDate(folder.quotes[0].issueDate) : null,
+      reached: hasQuote,
+    },
+    {
+      key: 'intervention',
+      label: 'Intervention',
+      date: interventionDate,
+      reached: interventionReached,
+    },
+    {
+      key: 'report',
+      label: 'Rapport',
+      date: hasReport ? formatDate(reports[0].createdAt) : null,
+      reached: hasReport,
+    },
+    { key: 'paid', label: 'Réglé', date: null, reached: isPaid },
+  ];
 }
 
 function formatBytes(bytes: number): string {
@@ -230,6 +345,7 @@ async function pickFromCamera(): Promise<PickedFile | null> {
 type ScreenData = {
   folder: FolderDetail;
   files: FolderFile[];
+  reports: FolderReport[];
 };
 
 export default function FolderDetailScreen() {
@@ -247,8 +363,14 @@ export default function FolderDetailScreen() {
       setIsLoading(true);
       setErrorMessage(null);
       try {
-        const [folder, files] = await Promise.all([getFolderById(id), getFolderFiles(id)]);
-        setData({ folder, files });
+        const [folder, files, reports] = await Promise.all([
+          getFolderById(id),
+          getFolderFiles(id),
+          // Les rapports sont secondaires : un échec (ou backend non déployé) ne
+          // doit pas bloquer l'affichage du dossier.
+          getFolderReports(id).catch(() => [] as FolderReport[]),
+        ]);
+        setData({ folder, files, reports });
       } catch (err) {
         if (err instanceof ApiError && err.status === 403) {
           setErrorMessage("Accès refusé. Vous n'êtes pas autorisé à consulter ce dossier.");
@@ -365,25 +487,45 @@ export default function FolderDetailScreen() {
     );
   }
 
-  const { folder, files } = data;
+  const { folder, files, reports } = data;
   const priceHt = formatPrice(folder.finalPriceHt);
   const priceTtc = formatPrice(folder.finalPriceTtc);
-  const reportFiles = files.filter((f) => f.category === 'diagnostic');
-  const otherFiles = files.filter((f) => f.category !== 'diagnostic');
+  const discountTtc = folder.discountAmountTtc ?? 0;
+  const discountPercent = folder.discountPercent ?? 0;
+  const hasDiscount = discountTtc > 0 || discountPercent > 0;
 
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <BackBar onBack={() => router.back()} />
         <ScrollView contentContainerStyle={[styles.scrollContent, centeredContent]} showsVerticalScrollIndicator={false}>
-        <Section title="Statut & montants">
-          <View style={styles.row}>
-            <ThemedText type="muted">Statut</ThemedText>
-            <Badge tone={STATUS_TONE[folder.status]}>{STATUS_LABELS[folder.status]}</Badge>
-          </View>
-          {priceHt ? <InfoRow label="Prix HT" value={priceHt} /> : null}
-          {priceTtc ? <InfoRow label="Prix TTC" value={priceTtc} /> : null}
-        </Section>
+        <FolderHeader folder={folder} />
+
+        <ProgressTimeline folder={folder} reports={reports} />
+
+        {(folder.interventions?.length ?? 0) > 0 ? (
+          <Section title="Intervention">
+            {folder.interventions.map((intervention, idx) => (
+              <View key={intervention.id}>
+                {idx > 0 ? <Separator /> : null}
+                <InterventionRow intervention={intervention} />
+              </View>
+            ))}
+          </Section>
+        ) : null}
+
+        {priceHt || priceTtc || hasDiscount ? (
+          <Section title="Montants">
+            {hasDiscount && folder.originalPriceTtc ? (
+              <InfoRow label="Prix initial TTC" value={formatAmount(folder.originalPriceTtc)} muted />
+            ) : null}
+            {hasDiscount ? (
+              <DiscountRow amountTtc={discountTtc} percent={folder.discountPercent} />
+            ) : null}
+            {priceHt ? <InfoRow label="Prix HT" value={priceHt} /> : null}
+            {priceTtc ? <InfoRow label="Prix TTC" value={priceTtc} /> : null}
+          </Section>
+        ) : null}
 
         {folder.prestations.length > 0 ? (
           <Section title="Prestations">
@@ -449,16 +591,16 @@ export default function FolderDetailScreen() {
         </Section>
 
         <Section title="Rapports">
-          {reportFiles.length === 0 ? (
+          {reports.length === 0 ? (
             <ThemedText type="muted" style={styles.emptyFiles}>
               Aucun rapport
             </ThemedText>
           ) : (
             <View>
-              {reportFiles.map((file, idx) => (
-                <View key={file.id}>
+              {reports.map((report, idx) => (
+                <View key={report.id}>
                   {idx > 0 ? <Separator /> : null}
-                  <FileRow file={file} />
+                  <ReportRow report={report} />
                 </View>
               ))}
             </View>
@@ -466,14 +608,17 @@ export default function FolderDetailScreen() {
         </Section>
 
         <Section title="Fichiers">
+          <ThemedText type="muted" style={styles.fileHelp}>
+            Ajoutez des documents clients comme les anciens diagnostics, factures de rénovation, etc.
+          </ThemedText>
           <AddFileButton onPress={openFilePicker} isUploading={isUploading} />
-          {otherFiles.length === 0 ? (
+          {files.length === 0 ? (
             <ThemedText type="muted" style={styles.emptyFiles}>
               Aucun fichier
             </ThemedText>
           ) : (
             <View style={{ marginTop: 4 }}>
-              {otherFiles.map((file, idx) => (
+              {files.map((file, idx) => (
                 <View key={file.id}>
                   {idx > 0 ? <Separator /> : null}
                   <FileRow file={file} />
@@ -488,6 +633,121 @@ export default function FolderDetailScreen() {
   );
 }
 
+function FolderHeader({ folder }: { folder: FolderDetail }) {
+  const colors = useColors();
+  const interventionAddress = folder.propertyAddress ?? formatClientAddress(folder);
+
+  return (
+    <View style={styles.header}>
+      <View style={styles.headerTop}>
+        <ThemedText type="label" tone="primary" style={styles.headerReference}>
+          DOSSIER {folder.reference}
+        </ThemedText>
+        <Badge tone={STATUS_TONE[folder.status]}>{STATUS_LABELS[folder.status]}</Badge>
+      </View>
+      <ThemedText type="title" style={styles.headerTitle}>
+        {folder.clientName}
+      </ThemedText>
+      {interventionAddress ? (
+        <View style={styles.headerSubtitle}>
+          <View style={[styles.pin, { borderColor: colors.mutedForeground }]} />
+          <ThemedText type="muted" style={styles.headerAddress}>
+            {interventionAddress}
+          </ThemedText>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function ProgressTimeline({
+  folder,
+  reports,
+}: {
+  folder: FolderDetail;
+  reports: FolderReport[];
+}) {
+  const colors = useColors();
+  const steps = buildSteps(folder, reports);
+  const lastReached = steps.reduce((acc, step, index) => (step.reached ? index : acc), 0);
+  const currentLabel = steps[lastReached]?.label ?? '—';
+
+  return (
+    <Card style={styles.timelineCard}>
+      <View style={styles.timelineHeader}>
+        <ThemedText type="label" tone="primary" style={styles.sectionTitle}>
+          AVANCEMENT
+        </ThemedText>
+        <Badge tone="success">{currentLabel}</Badge>
+      </View>
+
+      <View style={styles.timeline}>
+        {steps.map((step, index) => {
+          const state: StepState =
+            index < lastReached ? 'done' : index === lastReached ? 'current' : 'upcoming';
+          const isLast = index === steps.length - 1;
+          const lineColor = index < lastReached ? colors.primary : colors.border;
+
+          return (
+            <View key={step.key} style={styles.tlRow}>
+              <View style={styles.tlRail}>
+                <StepDot state={state} />
+                {!isLast ? (
+                  <View style={[styles.tlLine, { backgroundColor: lineColor }]} />
+                ) : null}
+              </View>
+              <View style={[styles.tlContent, isLast && styles.tlContentLast]}>
+                <ThemedText
+                  type="defaultSemiBold"
+                  style={{
+                    color: state === 'upcoming' ? colors.mutedForeground : colors.foreground,
+                  }}>
+                  {step.label}
+                </ThemedText>
+                {step.date ? (
+                  <ThemedText type="caption" tone="mutedForeground">
+                    {step.date}
+                  </ThemedText>
+                ) : state === 'current' ? (
+                  <ThemedText type="caption" tone="primary">
+                    En cours
+                  </ThemedText>
+                ) : null}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    </Card>
+  );
+}
+
+function StepDot({ state }: { state: StepState }) {
+  const colors = useColors();
+
+  if (state === 'done') {
+    return (
+      <View style={[styles.dot, { backgroundColor: colors.primary, borderColor: colors.primary }]}>
+        <ThemedText style={[styles.dotCheck, { color: colors.primaryForeground }]}>✓</ThemedText>
+      </View>
+    );
+  }
+
+  if (state === 'current') {
+    return (
+      <View
+        style={[
+          styles.dot,
+          { backgroundColor: colors.primary + '1A', borderColor: colors.primary },
+        ]}>
+        <View style={[styles.dotInner, { backgroundColor: colors.primary }]} />
+      </View>
+    );
+  }
+
+  return <View style={[styles.dot, { backgroundColor: colors.card, borderColor: colors.border }]} />;
+}
+
 interface SectionProps {
   title: string;
   children: React.ReactNode;
@@ -496,7 +756,7 @@ interface SectionProps {
 function Section({ title, children }: SectionProps) {
   return (
     <Card style={styles.section}>
-      <ThemedText type="label" tone="mutedForeground" style={styles.sectionTitle}>
+      <ThemedText type="label" tone="primary" style={styles.sectionTitle}>
         {title.toUpperCase()}
       </ThemedText>
       {children}
@@ -504,11 +764,28 @@ function Section({ title, children }: SectionProps) {
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function InfoRow({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
   return (
     <View style={styles.row}>
       <ThemedText type="muted">{label}</ThemedText>
-      <ThemedText style={styles.infoValue}>{value}</ThemedText>
+      <ThemedText type={muted ? 'muted' : undefined} style={muted ? styles.infoValueMuted : styles.infoValue}>
+        {value}
+      </ThemedText>
+    </View>
+  );
+}
+
+function DiscountRow({ amountTtc, percent }: { amountTtc: number; percent: number | null }) {
+  const colors = useColors();
+  const suffix = percent && percent > 0 ? ` (−${formatPercent(percent)})` : '';
+  return (
+    <View style={styles.row}>
+      <ThemedText type="muted" style={{ color: colors.primary }}>
+        {`Remise partenaire${suffix}`}
+      </ThemedText>
+      <ThemedText style={[styles.infoValue, { color: colors.primary }]}>
+        {`−${formatAmount(amountTtc)}`}
+      </ThemedText>
     </View>
   );
 }
@@ -599,13 +876,17 @@ function QuoteRow({ quote }: { quote: FolderQuoteSummary }) {
     <Pressable
       onPress={canOpen ? handleOpen : undefined}
       disabled={!canOpen}
+      accessibilityRole={canOpen ? 'button' : undefined}
+      accessibilityLabel={canOpen ? `Ouvrir le devis ${quote.reference}` : undefined}
       style={({ pressed }) => [
-        styles.docRow,
-        pressed && canOpen && { opacity: 0.6 },
+        canOpen ? styles.docRowTappable : styles.docRow,
+        pressed && canOpen && { backgroundColor: colors.surfaceOverlay },
       ]}>
       <View style={styles.docInfo}>
         <View style={styles.docTopRow}>
-          <ThemedText style={styles.docReference} numberOfLines={1}>
+          <ThemedText
+            style={[styles.docReference, canOpen && { color: colors.primary }]}
+            numberOfLines={1}>
             {quote.reference}
           </ThemedText>
           <Badge tone={QUOTE_STATUS_TONE[quote.status]}>
@@ -620,8 +901,21 @@ function QuoteRow({ quote }: { quote: FolderQuoteSummary }) {
             {formatAmount(quote.amountTtc)}
           </ThemedText>
         </View>
+        {canOpen ? (
+          <ThemedText type="caption" tone="primary" style={styles.openHint}>
+            Ouvrir le devis ↗
+          </ThemedText>
+        ) : null}
       </View>
+      {canOpen ? <RowChevron /> : null}
     </Pressable>
+  );
+}
+
+function RowChevron() {
+  const colors = useColors();
+  return (
+    <ThemedText style={[styles.chevron, { color: colors.mutedForeground }]}>›</ThemedText>
   );
 }
 
@@ -629,12 +923,23 @@ function InvoiceRow({ invoice }: { invoice: FolderInvoiceSummary }) {
   const colors = useColors();
   const date = formatDate(invoice.issueDate);
   const remaining = invoice.amountTtc - invoice.amountPaid;
+  const canOpen = invoice.url !== null;
 
   return (
-    <View style={styles.docRow}>
+    <Pressable
+      onPress={canOpen ? () => WebBrowser.openBrowserAsync(invoice.url!) : undefined}
+      disabled={!canOpen}
+      accessibilityRole={canOpen ? 'button' : undefined}
+      accessibilityLabel={canOpen ? `Ouvrir la facture ${invoice.reference}` : undefined}
+      style={({ pressed }) => [
+        canOpen ? styles.docRowTappable : styles.docRow,
+        pressed && canOpen && { backgroundColor: colors.surfaceOverlay },
+      ]}>
       <View style={styles.docInfo}>
         <View style={styles.docTopRow}>
-          <ThemedText style={styles.docReference} numberOfLines={1}>
+          <ThemedText
+            style={[styles.docReference, canOpen && { color: colors.primary }]}
+            numberOfLines={1}>
             {invoice.reference}
           </ThemedText>
           <Badge tone={INVOICE_STATUS_TONE[invoice.status]}>
@@ -652,8 +957,138 @@ function InvoiceRow({ invoice }: { invoice: FolderInvoiceSummary }) {
             {formatAmount(invoice.amountTtc)}
           </ThemedText>
         </View>
+        {canOpen ? (
+          <ThemedText type="caption" tone="primary" style={styles.openHint}>
+            Ouvrir la facture ↗
+          </ThemedText>
+        ) : null}
       </View>
+      {canOpen ? <RowChevron /> : null}
+    </Pressable>
+  );
+}
+
+function InterventionRow({ intervention }: { intervention: FolderInterventionSummary }) {
+  const rawDate = formatDateTime(intervention.scheduledAt);
+  const dateLabel = rawDate ? rawDate.charAt(0).toUpperCase() + rawDate.slice(1) : 'Date à définir';
+  const duration = formatDuration(intervention.durationMinutes);
+  const hasTechnician =
+    !!intervention.technicianName ||
+    !!intervention.technicianEmail ||
+    !!intervention.technicianPhone ||
+    !!intervention.technicianAvatarUrl;
+
+  return (
+    <View style={styles.interventionRow}>
+      <View style={styles.interventionTop}>
+        <ThemedText type="defaultSemiBold" style={styles.interventionDate}>
+          {dateLabel}
+        </ThemedText>
+        <Badge tone={INTERVENTION_STATUS_TONE[intervention.status]}>
+          {INTERVENTION_STATUS_LABELS[intervention.status]}
+        </Badge>
+      </View>
+      {duration ? (
+        <ThemedText type="caption" tone="mutedForeground">
+          {duration}
+        </ThemedText>
+      ) : null}
+      {hasTechnician ? <TechnicianBlock intervention={intervention} /> : null}
     </View>
+  );
+}
+
+function TechnicianBlock({ intervention }: { intervention: FolderInterventionSummary }) {
+  const colors = useColors();
+  const name = intervention.technicianName ?? 'Technicien';
+  const email = intervention.technicianEmail;
+  const phone = intervention.technicianPhone;
+
+  return (
+    <View style={[styles.techRow, { borderTopColor: colors.border }]}>
+      {intervention.technicianAvatarUrl ? (
+        <Image
+          source={{ uri: intervention.technicianAvatarUrl }}
+          style={styles.techAvatar}
+          accessibilityIgnoresInvertColors
+        />
+      ) : (
+        <View style={[styles.techAvatar, styles.techAvatarFallback, { backgroundColor: colors.muted }]}>
+          <ThemedText type="caption" tone="mutedForeground" style={styles.techInitials}>
+            {getInitials(name)}
+          </ThemedText>
+        </View>
+      )}
+      <View style={styles.techInfo}>
+        <ThemedText type="defaultSemiBold" numberOfLines={1}>
+          {name}
+        </ThemedText>
+        {email ? (
+          <Pressable
+            onPress={() => Linking.openURL(`mailto:${email}`)}
+            hitSlop={6}
+            accessibilityRole="link"
+            accessibilityLabel={`Envoyer un email à ${name}`}>
+            <ThemedText type="caption" tone="primary" numberOfLines={1}>
+              {email}
+            </ThemedText>
+          </Pressable>
+        ) : null}
+        {phone ? (
+          <ThemedText type="caption" tone="mutedForeground">
+            {phone}
+          </ThemedText>
+        ) : null}
+      </View>
+      {phone ? (
+        <Button
+          size="sm"
+          onPress={() => Linking.openURL(`tel:${phone}`)}
+          accessibilityLabel={`Appeler ${name}`}
+          style={styles.techCallButton}>
+          Appeler
+        </Button>
+      ) : null}
+    </View>
+  );
+}
+
+function getInitials(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('');
+}
+
+function ReportRow({ report }: { report: FolderReport }) {
+  const colors = useColors();
+  const date = formatDate(report.createdAt);
+  const meta = [date, formatBytes(report.size)].filter(Boolean).join(' · ');
+
+  return (
+    <Pressable
+      onPress={() => WebBrowser.openBrowserAsync(report.url)}
+      accessibilityRole="button"
+      accessibilityLabel={`Ouvrir le rapport ${report.filename}`}
+      style={({ pressed }) => [
+        styles.docRowTappable,
+        pressed && { backgroundColor: colors.surfaceOverlay },
+      ]}>
+      <View style={styles.docInfo}>
+        <ThemedText style={[styles.docReference, { color: colors.primary }]} numberOfLines={1}>
+          {report.filename}
+        </ThemedText>
+        <ThemedText type="caption" tone="mutedForeground">
+          {meta || 'PDF'}
+        </ThemedText>
+        <ThemedText type="caption" tone="primary" style={styles.openHint}>
+          Ouvrir le rapport ↗
+        </ThemedText>
+      </View>
+      <RowChevron />
+    </Pressable>
   );
 }
 
@@ -661,7 +1096,11 @@ function FileRow({ file }: { file: FolderFile }) {
   const colors = useColors();
   return (
     <Pressable
-      style={({ pressed }) => [styles.fileRow, pressed && { opacity: 0.65 }]}
+      onPress={() => WebBrowser.openBrowserAsync(file.url)}
+      style={({ pressed }) => [
+        styles.fileRow,
+        pressed && { backgroundColor: colors.surfaceOverlay },
+      ]}
       accessibilityRole="button"
       accessibilityLabel={`Ouvrir ${file.originalName}`}>
       <View style={[styles.fileIcon, { backgroundColor: colors.muted }]}>
@@ -677,6 +1116,7 @@ function FileRow({ file }: { file: FolderFile }) {
           {CATEGORY_LABELS[file.category]} · {formatBytes(file.size)}
         </ThemedText>
       </View>
+      <RowChevron />
     </Pressable>
   );
 }
@@ -716,9 +1156,93 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingTop: 12,
     paddingBottom: 40,
     gap: 12,
+  },
+  header: {
+    paddingTop: 4,
+    paddingBottom: 4,
+    gap: 6,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  headerReference: {
+    letterSpacing: 1,
+  },
+  headerTitle: {
+    fontSize: 26,
+    lineHeight: 32,
+  },
+  headerSubtitle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  pin: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    borderWidth: 2,
+  },
+  headerAddress: {
+    flex: 1,
+  },
+  timelineCard: {
+    gap: 14,
+  },
+  timelineHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  timeline: {
+    gap: 0,
+  },
+  tlRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  tlRail: {
+    width: 28,
+    alignItems: 'center',
+  },
+  tlLine: {
+    width: 2,
+    flex: 1,
+    marginTop: 2,
+    borderRadius: 1,
+  },
+  tlContent: {
+    flex: 1,
+    paddingBottom: 18,
+    gap: 1,
+  },
+  tlContentLast: {
+    paddingBottom: 0,
+  },
+  dot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dotCheck: {
+    fontSize: 14,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  dotInner: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
   },
   section: {
     gap: 12,
@@ -726,6 +1250,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     letterSpacing: 0.6,
     marginBottom: 4,
+    fontWeight: '700',
   },
   row: {
     flexDirection: 'row',
@@ -738,12 +1263,21 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     flex: 1,
   },
+  infoValueMuted: {
+    textAlign: 'right',
+    flex: 1,
+    textDecorationLine: 'line-through',
+  },
   notes: {
     lineHeight: 21,
   },
   emptyFiles: {
     textAlign: 'center',
     paddingVertical: 8,
+  },
+  fileHelp: {
+    marginBottom: 4,
+    lineHeight: 19,
   },
   addFile: {
     flexDirection: 'row',
@@ -760,6 +1294,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     paddingVertical: 10,
+    paddingHorizontal: 10,
+    marginHorizontal: -10,
+    borderRadius: Radius.md,
   },
   fileIcon: {
     width: 38,
@@ -805,11 +1342,73 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.2,
   },
+  interventionRow: {
+    paddingVertical: 8,
+    gap: 4,
+  },
+  interventionTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  interventionDate: {
+    flex: 1,
+  },
+  techRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 8,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  techAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    flexShrink: 0,
+  },
+  techAvatarFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  techInitials: {
+    fontWeight: '700',
+  },
+  techInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  techCallButton: {
+    flexShrink: 0,
+  },
   docRow: {
     paddingVertical: 10,
     gap: 4,
   },
+  docRowTappable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    marginHorizontal: -10,
+    borderRadius: Radius.md,
+  },
+  chevron: {
+    fontSize: 26,
+    lineHeight: 26,
+    fontWeight: '400',
+    marginTop: -2,
+    flexShrink: 0,
+  },
+  openHint: {
+    fontWeight: '600',
+    marginTop: 1,
+  },
   docInfo: {
+    flex: 1,
     gap: 6,
   },
   docTopRow: {

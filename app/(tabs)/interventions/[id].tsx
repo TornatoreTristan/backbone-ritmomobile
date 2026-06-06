@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Separator } from '@/components/ui/separator';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -52,6 +53,19 @@ function formatDuration(minutes: number): string {
   if (h === 0) return `${m} min`;
   if (m === 0) return `${h} h`;
   return `${h} h ${m}`;
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function getInitials(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('');
 }
 
 function callPhone(phone: string | null) {
@@ -130,53 +144,28 @@ export default function InterventionDetailScreen() {
 
 function InterventionDetail({ intervention }: { intervention: Intervention }) {
   const date = new Date(intervention.scheduledAt);
+  // Sur le terrain, le technicien appelle d'abord le contact présent à l'adresse ;
+  // à défaut, le propriétaire.
+  const primaryPhone = intervention.onSiteContact?.phone ?? intervention.owner.phone;
 
   return (
     <ScrollView contentContainerStyle={[styles.scrollContent, centeredContent]}>
-      <View style={styles.heroBlock}>
-        <Badge tone={INTERVENTION_STATUS_TONE[intervention.status]}>
-          {INTERVENTION_STATUS_LABELS[intervention.status]}
-        </Badge>
-        <ThemedText type="title" style={styles.prestation}>
-          {intervention.prestation}
-        </ThemedText>
-        <ThemedText type="muted" tone="mutedForeground">
-          {dateFormatter.format(date)}
-        </ThemedText>
-      </View>
+      <Hero intervention={intervention} date={date} />
 
-      {/* RDV */}
-      <SectionCard label="RENDEZ-VOUS">
-        <Row label="Créneau" value={formatSlot(intervention.scheduledAt, intervention.durationMinutes)} />
-        <Separator />
-        <Row label="Durée prévue" value={formatDuration(intervention.durationMinutes)} />
-      </SectionCard>
+      <ActionBar address={intervention.propertyAddress} phone={primaryPhone} />
 
       {/* Lieu d'intervention */}
-      <SectionCard label="LIEU D’INTERVENTION">
-        <ThemedText type="defaultSemiBold">{intervention.propertyAddress}</ThemedText>
-        {intervention.propertyAddressComplement ? (
-          <ThemedText type="muted" tone="mutedForeground">
-            {intervention.propertyAddressComplement}
-          </ThemedText>
-        ) : null}
-        <Button
-          variant="outline"
-          size="sm"
-          onPress={() => openMaps(intervention.propertyAddress)}
-          style={styles.actionButton}>
-          Itinéraire
-        </Button>
-      </SectionCard>
+      <LocationCard
+        address={intervention.propertyAddress}
+        complement={intervention.propertyAddressComplement}
+      />
 
-      {/* Conditions d'accès */}
+      {/* Conditions d'accès — info critique sur place, mise en avant */}
       {intervention.accessConditions ? (
-        <SectionCard label="CONDITIONS D’ACCÈS">
-          <ThemedText type="default">{intervention.accessConditions}</ThemedText>
-        </SectionCard>
+        <AccessCard conditions={intervention.accessConditions} />
       ) : null}
 
-      {/* Contact sur place */}
+      {/* Contacts */}
       {intervention.onSiteContact ? (
         <ContactCard label="CONTACT SUR PLACE" contact={intervention.onSiteContact} />
       ) : (
@@ -187,7 +176,6 @@ function InterventionDetail({ intervention }: { intervention: Intervention }) {
         </SectionCard>
       )}
 
-      {/* Propriétaire */}
       <ContactCard label="PROPRIÉTAIRE" contact={intervention.owner} />
 
       {/* Caractéristiques du bien */}
@@ -198,22 +186,113 @@ function InterventionDetail({ intervention }: { intervention: Intervention }) {
       {/* Notes internes */}
       {intervention.internalNotes ? (
         <SectionCard label="NOTES INTERNES">
-          <ThemedText type="default">{intervention.internalNotes}</ThemedText>
+          <ThemedText type="default" style={styles.notes}>
+            {intervention.internalNotes}
+          </ThemedText>
         </SectionCard>
       ) : null}
 
       {/* Référence dossier */}
-      <SectionCard label="RÉFÉRENCE">
-        <Row label="Dossier" value={intervention.folderReference} />
-      </SectionCard>
+      <ThemedText type="caption" tone="mutedForeground" style={styles.reference}>
+        Dossier {intervention.folderReference}
+      </ThemedText>
     </ScrollView>
+  );
+}
+
+function Hero({ intervention, date }: { intervention: Intervention; date: Date }) {
+  return (
+    <View style={styles.heroBlock}>
+      <ThemedText type="label" tone="primary" style={styles.heroDate}>
+        {capitalize(dateFormatter.format(date)).toUpperCase()}
+      </ThemedText>
+      <ThemedText type="title" style={styles.prestation}>
+        {intervention.prestation}
+      </ThemedText>
+      <View style={styles.heroMeta}>
+        <ThemedText type="defaultSemiBold">
+          {formatSlot(intervention.scheduledAt, intervention.durationMinutes)}
+        </ThemedText>
+        <ThemedText type="muted" tone="mutedForeground">
+          {`· ${formatDuration(intervention.durationMinutes)}`}
+        </ThemedText>
+        <View style={styles.heroBadge}>
+          <Badge tone={INTERVENTION_STATUS_TONE[intervention.status]}>
+            {INTERVENTION_STATUS_LABELS[intervention.status]}
+          </Badge>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function ActionBar({ address, phone }: { address: string; phone: string | null }) {
+  const colors = useColors();
+  return (
+    <View style={styles.actionBar}>
+      <Button
+        onPress={() => openMaps(address)}
+        accessibilityLabel="Ouvrir l’itinéraire"
+        style={styles.actionFlex}
+        leftIcon={<IconSymbol name="location.fill" size={16} color={colors.primaryForeground} />}>
+        Itinéraire
+      </Button>
+      {phone ? (
+        <Button
+          variant="outline"
+          onPress={() => callPhone(phone)}
+          accessibilityLabel="Appeler le contact"
+          style={styles.actionFlex}
+          leftIcon={<IconSymbol name="phone.fill" size={16} color={colors.foreground} />}>
+          Appeler
+        </Button>
+      ) : null}
+    </View>
+  );
+}
+
+function LocationCard({
+  address,
+  complement,
+}: {
+  address: string;
+  complement: string | null;
+}) {
+  return (
+    <SectionCard label="LIEU D’INTERVENTION">
+      <ThemedText type="defaultSemiBold" style={styles.address}>
+        {address}
+      </ThemedText>
+      {complement ? (
+        <ThemedText type="muted" tone="mutedForeground">
+          {complement}
+        </ThemedText>
+      ) : null}
+    </SectionCard>
+  );
+}
+
+function AccessCard({ conditions }: { conditions: string }) {
+  const colors = useColors();
+  return (
+    <Card style={[styles.accessCard, { backgroundColor: colors.surfaceOverlay, borderColor: colors.primary }]}>
+      <View style={styles.accessHeader}>
+        <ThemedText style={styles.accessIcon}>🔑</ThemedText>
+        <ThemedText type="label" tone="primary" style={styles.cardLabel}>
+          CONDITIONS D’ACCÈS
+        </ThemedText>
+      </View>
+      <ThemedText type="default" style={styles.accessText}>
+        {conditions}
+      </ThemedText>
+    </Card>
   );
 }
 
 function SectionCard({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <Card>
-      <ThemedText type="label" tone="mutedForeground" style={styles.cardLabel}>
+      <ThemedText type="label" tone="primary" style={styles.cardLabel}>
         {label}
       </ThemedText>
       {children}
@@ -225,28 +304,42 @@ function ContactCard({ label, contact }: { label: string; contact: Contact }) {
   const colors = useColors();
   return (
     <SectionCard label={label}>
-      <ThemedText type="defaultSemiBold">{contact.name}</ThemedText>
-      {contact.role ? (
-        <ThemedText type="caption" tone="mutedForeground">
-          {contact.role}
-        </ThemedText>
-      ) : null}
-      {contact.phone ? (
-        <Pressable
-          onPress={() => callPhone(contact.phone)}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel={`Appeler ${contact.name}`}
-          style={styles.phoneRow}>
-          <ThemedText type="link" style={{ color: colors.primary }}>
-            {contact.phone}
+      <View style={styles.contactRow}>
+        <View style={[styles.avatar, { backgroundColor: colors.muted }]}>
+          <ThemedText type="caption" tone="mutedForeground" style={styles.avatarInitials}>
+            {getInitials(contact.name)}
           </ThemedText>
-        </Pressable>
-      ) : (
-        <ThemedText type="caption" tone="mutedForeground">
-          Aucun téléphone renseigné
-        </ThemedText>
-      )}
+        </View>
+        <View style={styles.contactInfo}>
+          <ThemedText type="defaultSemiBold" numberOfLines={1}>
+            {contact.name}
+          </ThemedText>
+          {contact.role ? (
+            <ThemedText type="caption" tone="mutedForeground">
+              {contact.role}
+            </ThemedText>
+          ) : null}
+          {contact.phone ? (
+            <ThemedText type="caption" tone="mutedForeground">
+              {contact.phone}
+            </ThemedText>
+          ) : (
+            <ThemedText type="caption" tone="mutedForeground">
+              Aucun téléphone renseigné
+            </ThemedText>
+          )}
+        </View>
+        {contact.phone ? (
+          <Button
+            size="sm"
+            onPress={() => callPhone(contact.phone)}
+            accessibilityLabel={`Appeler ${contact.name}`}
+            style={styles.contactCallButton}
+            leftIcon={<IconSymbol name="phone.fill" size={14} color={colors.primaryForeground} />}>
+            Appeler
+          </Button>
+        ) : null}
+      </View>
     </SectionCard>
   );
 }
@@ -343,14 +436,79 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   heroBlock: {
-    gap: 8,
+    gap: 6,
     paddingVertical: 4,
   },
-  prestation: {},
+  heroDate: {
+    letterSpacing: 1,
+  },
+  prestation: {
+    fontSize: 26,
+    lineHeight: 32,
+  },
+  heroMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 2,
+  },
+  heroBadge: {
+    marginLeft: 'auto',
+  },
+  actionBar: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  actionFlex: {
+    flex: 1,
+  },
   cardLabel: {
     textTransform: 'uppercase',
-    letterSpacing: 1.2,
+    letterSpacing: 0.6,
+    fontWeight: '700',
     marginBottom: 2,
+  },
+  address: {
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  accessCard: {
+    gap: 8,
+  },
+  accessHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  accessIcon: {
+    fontSize: 15,
+  },
+  accessText: {
+    lineHeight: 21,
+  },
+  contactRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  avatarInitials: {
+    fontWeight: '700',
+  },
+  contactInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  contactCallButton: {
+    flexShrink: 0,
   },
   row: {
     flexDirection: 'row',
@@ -363,11 +521,11 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     flexShrink: 1,
   },
-  actionButton: {
-    alignSelf: 'flex-start',
-    marginTop: 6,
+  notes: {
+    lineHeight: 21,
   },
-  phoneRow: {
-    marginTop: 2,
+  reference: {
+    textAlign: 'center',
+    marginTop: 4,
   },
 });

@@ -45,7 +45,13 @@ const STATUS_LABELS: Record<FolderStatus, string> = {
   archived: 'Archivé',
 };
 
-const ACTIVE_STATUSES: FolderStatus[] = ['draft', 'lead'];
+/**
+ * Un dossier n'est « terminé » que lorsqu'il est réglé (paiement enregistré) ou
+ * archivé. Un devis signé (statut `deal`) reste actif tant qu'il n'est pas payé.
+ */
+function isFolderCompleted(folder: Folder): boolean {
+  return folder.paidAt != null || folder.status === 'archived';
+}
 
 const priceFormatter = new Intl.NumberFormat('fr-FR', {
   style: 'currency',
@@ -271,8 +277,8 @@ function PartnerDashboard() {
     const a: Folder[] = [];
     const c: Folder[] = [];
     for (const f of folders) {
-      if (ACTIVE_STATUSES.includes(f.status)) a.push(f);
-      else c.push(f);
+      if (isFolderCompleted(f)) c.push(f);
+      else a.push(f);
     }
     return { active: a, completed: c };
   }, [folders]);
@@ -385,8 +391,8 @@ function StaffDashboard() {
     const a: Folder[] = [];
     const c: Folder[] = [];
     for (const f of folders) {
-      if (ACTIVE_STATUSES.includes(f.status)) a.push(f);
-      else c.push(f);
+      if (isFolderCompleted(f)) c.push(f);
+      else a.push(f);
     }
     return { active: a, completed: c };
   }, [folders]);

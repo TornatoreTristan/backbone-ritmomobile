@@ -8,6 +8,12 @@
     "scheme": "backboneritmomobile",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "updates": {
+      "url": "https://u.expo.dev/27eeab48-faa1-44ed-93a9-5b8e8f752def"
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.backbone.ritmomobile",

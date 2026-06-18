@@ -7,7 +7,7 @@ import { selectQuoteTotals, useQuoteWizard } from '@/contexts/quote-wizard-conte
 import { useColors } from '@/hooks/use-theme-color';
 import { calculateGridTotal, normalizePropertyType, type SuggestedProduct } from '@/services/quote-wizard';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -94,19 +94,24 @@ export default function Step7Screen() {
   const staffOrgId = isStaff ? (currentOrganization?.id ?? undefined) : undefined;
 
   const [updatingProductId, setUpdatingProductId] = useState<string | null>(null);
+  const [gridLoading, setGridLoading] = useState(false);
+  const [gridError, setGridError] = useState(false);
 
   const allSuggestions = [...state.suggestionsObligatoire, ...state.suggestionsFacultatif];
   const totals = selectQuoteTotals(state);
 
-  async function handleToggle(productId: string) {
-    const allSelected = toggleProduct(productId);
-    setUpdatingProductId(productId);
+  const selectedGridCount = allSuggestions.filter(
+    (s) => s.pricingSource === 'grid' && state.selectedProductIds.includes(s.product.id),
+  ).length;
+  const hasValidGridTotal = !!state.gridTotal && (state.gridTotal.priceTtc ?? 0) > 0;
+  // Bloque l'envoi si des diagnostics grille sont sélectionnés mais qu'on n'a pas
+  // de prix grille valide : sans ça l'app enverrait des diagnostics à 0 €.
+  const gridPriceMissing = selectedGridCount > 0 && !hasValidGridTotal;
 
+  async function fetchGridTotal(gridProductCount: number) {
+    setGridLoading(true);
+    setGridError(false);
     try {
-      const gridProductCount = allSuggestions.filter(
-        (s) => s.pricingSource === 'grid' && allSelected.includes(s.product.id),
-      ).length;
-
       const surfaceArea = state.surfaceArea.trim() ? parseFloat(state.surfaceArea) : undefined;
       const propertyType = normalizePropertyType(state.propertyType ?? '');
 
@@ -119,10 +124,32 @@ export default function Step7Screen() {
 
       setGridTotal(gridTotal);
     } catch {
-      // Silencieux — le total précédent reste affiché
+      setGridError(true);
     } finally {
-      setUpdatingProductId(null);
+      setGridLoading(false);
     }
+  }
+
+  // Le prix grille n'est pas persisté : si on arrive sur l'écran avec des
+  // diagnostics déjà sélectionnés (brouillon repris, obligatoires pré-cochés)
+  // sans toggle manuel, on le (re)calcule pour ne jamais envoyer 0.
+  useEffect(() => {
+    if (selectedGridCount > 0 && !hasValidGridTotal) {
+      fetchGridTotal(selectedGridCount);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGridCount]);
+
+  async function handleToggle(productId: string) {
+    const allSelected = toggleProduct(productId);
+    setUpdatingProductId(productId);
+
+    const gridProductCount = allSuggestions.filter(
+      (s) => s.pricingSource === 'grid' && allSelected.includes(s.product.id),
+    ).length;
+
+    await fetchGridTotal(gridProductCount);
+    setUpdatingProductId(null);
   }
 
   return (
@@ -187,15 +214,30 @@ export default function Step7Screen() {
           </ThemedText>
           <View style={styles.totalRow}>
             <ThemedText style={styles.totalLabel}>Total TTC</ThemedText>
-            <ThemedText style={[styles.totalValue, { color: colors.foreground }]}>
-              {priceFormatter.format(totals.totalTtc)}
-            </ThemedText>
+            {gridLoading ? (
+              <ActivityIndicator size="small" color={colors.foreground} />
+            ) : (
+              <ThemedText style={[styles.totalValue, { color: colors.foreground }]}>
+                {priceFormatter.format(totals.totalTtc)}
+              </ThemedText>
+            )}
           </View>
+          {gridError ? (
+            <ThemedText style={[styles.gridErrorText, { color: colors.destructive }]}>
+              Impossible de calculer le prix grille. Touchez un diagnostic pour réessayer.
+            </ThemedText>
+          ) : gridPriceMissing ? (
+            <ThemedText style={[styles.gridErrorText, { color: colors.destructive }]}>
+              Calcul du prix grille en cours…
+            </ThemedText>
+          ) : null}
         </View>
       </WizardScreen>
 
       <WizardFooter
         onBack={() => router.back()}
+        loading={gridLoading}
+        nextDisabled={gridLoading || gridPriceMissing}
         onNext={() =>
           router.push(isStaff ? '/quote-wizard/pricing' : '/quote-wizard/step-8')
         }
@@ -290,5 +332,9 @@ const styles = StyleSheet.create({
   totalValue: {
     fontSize: 22,
     fontWeight: '700',
+  },
+  gridErrorText: {
+    fontSize: 12,
+    fontWeight: '500',
   },
 });

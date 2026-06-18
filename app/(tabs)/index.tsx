@@ -1,3 +1,4 @@
+import { HeaderSearchButton, type SearchTargetType } from '@/components/header-search-button';
 import { OrganizationGate } from '@/components/organization-gate';
 import { Badge } from '@/components/ui/badge';
 import { PressableCard } from '@/components/ui/card';
@@ -7,8 +8,16 @@ import { ThemedView } from '@/components/themed-view';
 import { centeredContent } from '@/constants/layout';
 import { Radius } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
+import { useOrganization } from '@/contexts/organization-context';
 import { useColors } from '@/hooks/use-theme-color';
 import { type Folder, type FolderStatus, getMyFolders } from '@/services/folders';
+import { getOrganizationFolders } from '@/services/staff-folders';
+import {
+  INTERVENTION_STATUS_LABELS,
+  INTERVENTION_STATUS_TONE,
+  type Intervention,
+  listTodayInterventions,
+} from '@/services/technician';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -36,7 +45,13 @@ const STATUS_LABELS: Record<FolderStatus, string> = {
   archived: 'Archivé',
 };
 
-const ACTIVE_STATUSES: FolderStatus[] = ['draft', 'lead'];
+/**
+ * Un dossier n'est « terminé » que lorsqu'il est réglé (paiement enregistré) ou
+ * archivé. Un devis signé (statut `deal`) reste actif tant qu'il n'est pas payé.
+ */
+function isFolderCompleted(folder: Folder): boolean {
+  return folder.paidAt != null || folder.status === 'archived';
+}
 
 const priceFormatter = new Intl.NumberFormat('fr-FR', {
   style: 'currency',
@@ -52,7 +67,12 @@ function formatPrice(raw: string | null): string | null {
 
 export default function HomeScreen() {
   const { user } = useAuth();
+  const { isTechnician, isStaff } = useOrganization();
   const firstName = user?.fullName?.split(' ')[0];
+  const searchType: SearchTargetType = isTechnician ? 'interventions' : 'folders';
+  const searchAccessibility = isTechnician
+    ? 'Rechercher une intervention'
+    : 'Rechercher un dossier';
 
   return (
     <ThemedView style={styles.container}>
@@ -60,12 +80,162 @@ export default function HomeScreen() {
         <ScreenHeader
           eyebrow={firstName ? 'BONJOUR' : undefined}
           title={firstName ?? 'Bonjour'}
+          trailing={
+            <HeaderSearchButton type={searchType} accessibilityLabel={searchAccessibility} />
+          }
         />
-        <OrganizationGate>
-          <PartnerDashboard />
+        <OrganizationGate partnerOnly={false}>
+          {isTechnician ? (
+            <TechnicianDashboard />
+          ) : isStaff ? (
+            <StaffDashboard />
+          ) : (
+            <PartnerDashboard />
+          )}
         </OrganizationGate>
       </SafeAreaView>
     </ThemedView>
+  );
+}
+
+const timeFormatter = new Intl.DateTimeFormat('fr-FR', {
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+function formatSlot(iso: string, durationMinutes: number): string {
+  const start = new Date(iso);
+  const end = new Date(start.getTime() + durationMinutes * 60_000);
+  return `${timeFormatter.format(start)} – ${timeFormatter.format(end)}`;
+}
+
+function TechnicianDashboard() {
+  const router = useRouter();
+  const colors = useColors();
+  const [interventions, setInterventions] = useState<Intervention[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setIsLoading(true);
+    setError(null);
+    try {
+      const data = await listTodayInterventions();
+      setInterventions(data);
+    } catch (err) {
+      console.warn('[interventions] load failed:', err);
+      setError('Impossible de charger les interventions du jour.');
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
+
+  const handleRefresh = useCallback(() => {
+    setIsRefreshing(true);
+    load(true);
+  }, [load]);
+
+  if (isLoading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={colors.foreground} />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.center}>
+        <ThemedText tone="destructive" style={styles.errorText}>
+          {error}
+        </ThemedText>
+        <Pressable onPress={() => load()} hitSlop={8}>
+          <ThemedText tone="primary" style={styles.retry}>
+            Réessayer
+          </ThemedText>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView
+      contentContainerStyle={[styles.scrollContent, centeredContent]}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={handleRefresh}
+          tintColor={colors.foreground}
+        />
+      }>
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <ThemedText type="label" tone="mutedForeground" style={styles.sectionLabel}>
+            AUJOURD&apos;HUI · {interventions.length}
+          </ThemedText>
+          <Pressable onPress={() => router.push('/planning')} hitSlop={8}>
+            <ThemedText
+              type="small"
+              style={[styles.sectionAction, { color: colors.foreground }]}>
+              Voir le planning
+            </ThemedText>
+          </Pressable>
+        </View>
+
+        {interventions.length === 0 ? (
+          <ThemedText type="muted" style={styles.sectionEmpty}>
+            Aucune intervention prévue aujourd&apos;hui.
+          </ThemedText>
+        ) : (
+          <View style={styles.sectionList}>
+            {interventions.map((intervention) => (
+              <TechnicianInterventionRow
+                key={intervention.id}
+                intervention={intervention}
+                onPress={() => router.push(`/interventions/${intervention.id}`)}
+              />
+            ))}
+          </View>
+        )}
+      </View>
+    </ScrollView>
+  );
+}
+
+function TechnicianInterventionRow({
+  intervention,
+  onPress,
+}: {
+  intervention: Intervention;
+  onPress: () => void;
+}) {
+  return (
+    <PressableCard onPress={onPress}>
+      <View style={styles.cardTop}>
+        <ThemedText type="defaultSemiBold">
+          {formatSlot(intervention.scheduledAt, intervention.durationMinutes)}
+        </ThemedText>
+        <Badge tone={INTERVENTION_STATUS_TONE[intervention.status]}>
+          {INTERVENTION_STATUS_LABELS[intervention.status]}
+        </Badge>
+      </View>
+      <ThemedText type="muted" numberOfLines={1}>
+        {intervention.owner?.name
+          ? `${intervention.prestation} · ${intervention.owner.name}`
+          : intervention.prestation}
+      </ThemedText>
+      <ThemedText type="caption" tone="mutedForeground" numberOfLines={1}>
+        {intervention.propertyAddress}
+      </ThemedText>
+    </PressableCard>
   );
 }
 
@@ -107,8 +277,8 @@ function PartnerDashboard() {
     const a: Folder[] = [];
     const c: Folder[] = [];
     for (const f of folders) {
-      if (ACTIVE_STATUSES.includes(f.status)) a.push(f);
-      else c.push(f);
+      if (isFolderCompleted(f)) c.push(f);
+      else a.push(f);
     }
     return { active: a, completed: c };
   }, [folders]);
@@ -169,6 +339,149 @@ function PartnerDashboard() {
         />
       ) : null}
     </ScrollView>
+  );
+}
+
+function StaffDashboard() {
+  const router = useRouter();
+  const colors = useColors();
+  const { currentOrganization } = useOrganization();
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showCompleted, setShowCompleted] = useState(false);
+
+  const orgId = currentOrganization?.id;
+
+  const loadFolders = useCallback(
+    async (silent = false) => {
+      if (!orgId) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+        return;
+      }
+      if (!silent) setIsLoading(true);
+      setError(null);
+      try {
+        const data = await getOrganizationFolders(orgId);
+        setFolders(data);
+      } catch {
+        setError('Impossible de charger les dossiers.');
+      } finally {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    },
+    [orgId],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      loadFolders();
+    }, [loadFolders]),
+  );
+
+  const handleRefresh = useCallback(() => {
+    setIsRefreshing(true);
+    loadFolders(true);
+  }, [loadFolders]);
+
+  const { active, completed } = useMemo(() => {
+    const a: Folder[] = [];
+    const c: Folder[] = [];
+    for (const f of folders) {
+      if (isFolderCompleted(f)) c.push(f);
+      else a.push(f);
+    }
+    return { active: a, completed: c };
+  }, [folders]);
+
+  if (isLoading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={colors.foreground} />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.center}>
+        <ThemedText tone="destructive" style={styles.errorText}>
+          {error}
+        </ThemedText>
+        <Pressable onPress={() => loadFolders()} hitSlop={8}>
+          <ThemedText tone="primary" style={styles.retry}>
+            Réessayer
+          </ThemedText>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView
+      contentContainerStyle={[styles.scrollContent, centeredContent]}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={handleRefresh}
+          tintColor={colors.foreground}
+        />
+      }>
+      <CreateFolderCta onPress={() => router.push('/quote-wizard/step-1')} />
+
+      <Section
+        label="EN COURS"
+        count={active.length}
+        items={active}
+        emptyText="Aucun dossier en cours dans l’organisation."
+        onPressItem={(id) => router.push(`/folders/${id}`)}
+      />
+
+      {completed.length > 0 ? (
+        <Section
+          label="TERMINÉS"
+          count={completed.length}
+          items={showCompleted ? completed : []}
+          trailingAction={{
+            label: showCompleted ? 'Masquer' : 'Afficher',
+            onPress: () => setShowCompleted((v) => !v),
+          }}
+          onPressItem={(id) => router.push(`/folders/${id}`)}
+        />
+      ) : null}
+    </ScrollView>
+  );
+}
+
+function CreateFolderCta({ onPress }: { onPress: () => void }) {
+  const colors = useColors();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Créer un nouveau dossier"
+      style={({ pressed }) => [
+        styles.cta,
+        { backgroundColor: colors.primary },
+        pressed && styles.ctaPressed,
+      ]}>
+      <View style={styles.ctaText}>
+        <ThemedText
+          type="label"
+          style={[styles.ctaEyebrow, { color: colors.primaryForeground, opacity: 0.7 }]}>
+          NOUVEAU
+        </ThemedText>
+        <ThemedText type="h3" style={{ color: colors.primaryForeground }}>
+          Créer un dossier
+        </ThemedText>
+      </View>
+      <View style={[styles.ctaCircle, { backgroundColor: colors.primaryForeground }]}>
+        <ThemedText style={[styles.ctaPlus, { color: colors.primary }]}>+</ThemedText>
+      </View>
+    </Pressable>
   );
 }
 

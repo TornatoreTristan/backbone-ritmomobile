@@ -3,6 +3,7 @@ import { WizardField } from '@/components/wizard/wizard-field';
 import { WizardFooter } from '@/components/wizard/wizard-footer';
 import { WizardScreen } from '@/components/wizard/wizard-screen';
 import { Radius } from '@/constants/theme';
+import { useOrganization } from '@/contexts/organization-context';
 import { useQuoteWizard } from '@/contexts/quote-wizard-context';
 import { useColors } from '@/hooks/use-theme-color';
 import { type BanSuggestion, searchAddress } from '@/services/ban-autocomplete';
@@ -16,6 +17,8 @@ export default function Step2Screen() {
   const router = useRouter();
   const { state, update, setBdnb } = useQuoteWizard();
   const colors = useColors();
+  const { isStaff, currentOrganization } = useOrganization();
+  const staffOrgId = isStaff ? (currentOrganization?.id ?? undefined) : undefined;
 
   const [suggestions, setSuggestions] = useState<BanSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -58,7 +61,7 @@ export default function Step2Screen() {
           address: trimmedAddress,
           postalCode: state.postalCode,
           city: state.propertyCity.trim() || undefined,
-        });
+        }, staffOrgId);
         setBdnb(result);
       } catch {
         // BDNB non critique, silencieux
@@ -117,7 +120,7 @@ export default function Step2Screen() {
         address: suggestion.name,
         postalCode: suggestion.postcode,
         city: suggestion.city,
-      });
+      }, staffOrgId);
       setBdnb(result);
     } catch {
       // BDNB non critique, silencieux

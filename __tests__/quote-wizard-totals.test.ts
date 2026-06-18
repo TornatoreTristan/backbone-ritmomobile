@@ -52,6 +52,12 @@ function makeState(overrides: Partial<WizardState> = {}): WizardState {
     billingPostalCode: '',
     billingCity: '',
     clientComments: '',
+    staffOriginalPriceTtc: '',
+    staffFinalPriceTtc: '',
+    staffDiscountPercent: '',
+    staffRdvDate: null,
+    staffRdvDurationMinutes: '',
+    staffTechnicianIds: [],
     ...overrides,
   };
 }

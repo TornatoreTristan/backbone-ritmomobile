@@ -3,6 +3,7 @@ import { WizardField } from '@/components/wizard/wizard-field';
 import { WizardFooter } from '@/components/wizard/wizard-footer';
 import { WizardScreen } from '@/components/wizard/wizard-screen';
 import { Radius } from '@/constants/theme';
+import { useOrganization } from '@/contexts/organization-context';
 import { useQuoteWizard } from '@/contexts/quote-wizard-context';
 import { useColors } from '@/hooks/use-theme-color';
 import {
@@ -25,6 +26,8 @@ export default function Step6Screen() {
   const { state, addDependance, removeDependance, updateDependance, setSuggestions, setGridTotal } =
     useQuoteWizard();
   const colors = useColors();
+  const { isStaff, currentOrganization } = useOrganization();
+  const staffOrgId = isStaff ? (currentOrganization?.id ?? undefined) : undefined;
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +61,7 @@ export default function Step6Screen() {
         surfaceArea,
         hasGas,
         hasElectricity: true,
-      });
+      }, staffOrgId);
 
       setSuggestions(suggestions);
 
@@ -67,7 +70,7 @@ export default function Step6Screen() {
         propertyType,
         diagnosticCount: suggestions.obligatoire.length,
         ...(surfaceArea !== null ? { surfaceArea } : {}),
-      });
+      }, staffOrgId);
 
       setGridTotal(gridTotal);
 

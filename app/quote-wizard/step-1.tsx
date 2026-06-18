@@ -28,7 +28,6 @@ export default function Step1Screen() {
       <WizardScreen
         title="Type de projet"
         subtitle="Quel type de projet souhaitez-vous diagnostiquer ?"
-        keyboardAvoiding={false}
         contentStyle={{ gap: 10 }}>
         {OPTIONS.map((option) => (
           <RadioCard

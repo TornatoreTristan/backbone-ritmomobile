@@ -1,8 +1,14 @@
 /**
- * Design tokens — aligned with the SaaS web frontend (shadcn/ui neutral preset).
+ * Design tokens — aligned with the SaaS web *partner portal* DA.
  *
- * Web reference: backbone-ritmo/inertia/css/app.css (Tailwind v4 + shadcn).
- * oklch values converted to sRGB hex equivalents close to Tailwind v4 neutral.
+ * Web reference: backbone-ritmo/inertia/css/app.css → `.partner-theme`
+ * (applied by inertia/components/layouts/partner-layout.tsx). The partner portal
+ * starts from the shadcn neutral `:root` preset and overrides only the brand:
+ *   --primary: #1f4332 (forest green) · --background: #fffdf6 (cool ivory) · --ring: #1f4332.
+ * Light mode below mirrors that exactly. oklch neutrals are converted to their
+ * sRGB hex equivalents. The web portal is light-only; dark mode here keeps the
+ * brand coherent by shifting the green to a lighter, dark-readable tint (#56a681,
+ * the landing/brand green).
  *
  * Color tokens follow shadcn semantic naming:
  *   background, foreground, card, cardForeground, popover, popoverForeground,
@@ -18,25 +24,25 @@ import { Platform } from 'react-native';
 
 export const Colors = {
   light: {
-    // Surfaces
-    background: '#faf6ee',
-    foreground: '#0a0a0a',
+    // Surfaces — partner portal: cool ivory background, white cards
+    background: '#fffdf6',
+    foreground: '#252525',
     card: '#ffffff',
-    cardForeground: '#0a0a0a',
+    cardForeground: '#252525',
     popover: '#ffffff',
-    popoverForeground: '#0a0a0a',
+    popoverForeground: '#252525',
 
-    // Brand
-    primary: '#171717',
-    primaryForeground: '#fafafa',
+    // Brand — partner forest green
+    primary: '#1f4332',
+    primaryForeground: '#ffffff',
 
-    // Neutrals
-    secondary: '#f5f5f5',
-    secondaryForeground: '#171717',
-    muted: '#f5f5f5',
-    mutedForeground: '#737373',
-    accent: '#f5f5f5',
-    accentForeground: '#171717',
+    // Neutrals (shadcn neutral preset)
+    secondary: '#f7f7f7',
+    secondaryForeground: '#343434',
+    muted: '#f7f7f7',
+    mutedForeground: '#8e8e8e',
+    accent: '#f7f7f7',
+    accentForeground: '#343434',
 
     // States
     destructive: '#d4183d',
@@ -45,21 +51,21 @@ export const Colors = {
     warning: '#f59e0b',
     info: '#2563eb',
 
-    // Lines & focus
-    border: '#e5e5e5',
-    input: '#e5e5e5',
-    ring: '#a3a3a3',
+    // Lines & focus — focus ring on brand green
+    border: '#ebebeb',
+    input: '#ebebeb',
+    ring: '#1f4332',
 
     // Surface variants
-    surfaceSubtle: '#fafafa',
-    surfaceOverlay: 'rgba(0, 0, 0, 0.04)',
+    surfaceSubtle: '#faf8f0',
+    surfaceOverlay: 'rgba(31, 67, 50, 0.04)',
 
     // Legacy aliases
-    text: '#0a0a0a',
-    tint: '#171717',
-    icon: '#737373',
+    text: '#252525',
+    tint: '#1f4332',
+    icon: '#8e8e8e',
     tabIconDefault: '#a3a3a3',
-    tabIconSelected: '#171717',
+    tabIconSelected: '#1f4332',
   },
   dark: {
     // Surfaces
@@ -70,9 +76,9 @@ export const Colors = {
     popover: '#262626',
     popoverForeground: '#fafafa',
 
-    // Brand
-    primary: '#fafafa',
-    primaryForeground: '#171717',
+    // Brand — lighter green so it stays readable on dark surfaces
+    primary: '#56a681',
+    primaryForeground: '#0a0a0a',
 
     // Neutrals
     secondary: '#262626',
@@ -89,21 +95,21 @@ export const Colors = {
     warning: '#fbbf24',
     info: '#60a5fa',
 
-    // Lines & focus
+    // Lines & focus — focus ring on brand green
     border: '#262626',
     input: '#404040',
-    ring: '#737373',
+    ring: '#56a681',
 
     // Surface variants
     surfaceSubtle: '#141414',
-    surfaceOverlay: 'rgba(255, 255, 255, 0.06)',
+    surfaceOverlay: 'rgba(86, 166, 129, 0.08)',
 
     // Legacy aliases
     text: '#fafafa',
-    tint: '#fafafa',
+    tint: '#56a681',
     icon: '#a3a3a3',
     tabIconDefault: '#737373',
-    tabIconSelected: '#fafafa',
+    tabIconSelected: '#56a681',
   },
 } as const;
 

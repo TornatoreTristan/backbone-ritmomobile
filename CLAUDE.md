@@ -66,8 +66,21 @@ Wraps `expo-secure-store` with two keys: `auth_token` and `auth_user`. The `Stor
 - iOS uses `expo.version` + `expo.ios.buildNumber` (currently set by EAS auto-increment in production profile).
 - Android uses `expo.version` + `expo.android.versionCode`. The `versionCode` is currently pinned in `app.json`; **bump it manually in any PR that ships an Android build to a higher track (internal → closed → production)**. EAS production profile has `autoIncrement: true` as a safety net, but explicit bumps make release diffs reviewable.
 
-### EAS secrets (required for production builds)
-- `EXPO_PUBLIC_SENTRY_DSN` — must be set as an EAS project secret (`eas secret:create --scope project --name EXPO_PUBLIC_SENTRY_DSN --value <DSN>`). Sentry is auto-disabled when the DSN is empty (`constants/api.ts`, `app/_layout.tsx`), so crash reporting silently no-ops if this secret is missing.
+### EAS environment variables (required for production builds)
+`EXPO_PUBLIC_SENTRY_DSN` gates crash reporting: `Sentry.init({ enabled: SENTRY_DSN !== '' && !__DEV__ })` (`app/_layout.tsx`, `constants/api.ts`). When it is unset, Sentry silently no-ops — **as of 2026-08-05 no variable was configured at all, so Sentry had never actually been active in production.** Verify with `eas env:list production` before trusting any absence of alerts.
+
+```bash
+eas env:create --scope project --environment production \
+  --name EXPO_PUBLIC_SENTRY_DSN --value <DSN> --visibility plaintext
+```
+
+Two traps:
+- **Do not use `secret` visibility.** Secret values are never readable back by the CLI, so `eas update` cannot inline them and every OTA-delivered bundle would ship with an empty DSN. A Sentry DSN is public by design (it ships inside the client bundle) — `plaintext` is correct.
+- **`eas update` bundles locally**, so it resolves env vars from *your shell*, not from EAS, unless you pass `--environment production`. Always publish with:
+  ```bash
+  eas update --branch production --environment production --message "..."
+  ```
+  Omitting it silently produces a bundle with `SENTRY_DSN = ''`, disabling crash reporting for every user who receives the update.
 
 ### Android Google Sign-In prerequisites
 Two independent conditions must **both** hold, or Android fails with `DEVELOPER_ERROR`. They are unrelated to each other — check both before debugging anything else.

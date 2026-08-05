@@ -57,6 +57,23 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
+// `DEVELOPER_ERROR` ne fait pas partie de `statusCodes` : la lib ne l'expose que
+// via le code natif ou le message. Il signale une config Google invalide côté
+// console (webClientId qui n'est pas un client Web, ou SHA-1 non enregistré) —
+// jamais une erreur de l'utilisateur, d'où le message qui l'oriente vers le support.
+function describeGoogleError(error: any): string {
+  const code = String(error?.code ?? '');
+  const message = String(error?.message ?? '');
+
+  if (code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+    return 'Google Play Services est indisponible ou obsolète sur cet appareil.';
+  }
+  if (code === 'DEVELOPER_ERROR' || code === '10' || message.includes('DEVELOPER_ERROR')) {
+    return "La configuration Google de cette version de l'app est invalide. Contactez le support.";
+  }
+  return 'Connexion Google impossible. Réessayez dans un instant.';
+}
+
 export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<StoredUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -145,8 +162,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
     } catch (error: any) {
       if (error.code === statusCodes.SIGN_IN_CANCELLED) return;
       if (error.code === statusCodes.IN_PROGRESS) return;
-      console.error('Sign-in error: ' + (error?.code ?? error?.message ?? 'unknown'));
-      throw error;
+      Sentry.captureException(error, {
+        tags: {
+          auth_provider: 'google',
+          google_status_code: String(error?.code ?? 'unknown'),
+        },
+        extra: { originalMessage: error?.message },
+      });
+      throw new Error(describeGoogleError(error));
     }
   }
 
@@ -190,7 +213,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setUser(response.data.user);
     } catch (error: any) {
       if (error?.code === 'ERR_REQUEST_CANCELED') return;
-      console.error('Apple sign-in error: ' + (error?.code ?? error?.message ?? 'unknown'));
+      Sentry.captureException(error, {
+        tags: {
+          auth_provider: 'apple',
+          apple_error_code: String(error?.code ?? 'unknown'),
+        },
+        extra: { originalMessage: error?.message },
+      });
       throw error;
     }
   }

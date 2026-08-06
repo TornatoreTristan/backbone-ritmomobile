@@ -55,6 +55,12 @@ export type SuggestedProduct = {
     priceSupplementHt?: number | null;
     priceSupplementTtc?: number | null;
     supplementLabel?: string | null;
+    /**
+     * Nature tarifaire du produit en base. C'est le SEUL critère fiable pour
+     * savoir si une prestation relève de la grille : c'est celui qu'utilise le
+     * serveur pour retarifer (`collectGridDiagnosticItems`). Voir `isGridDiagnostic`.
+     */
+    pricingType?: 'grid' | 'fixed';
   };
   result: 'obligatoire' | 'facultatif';
   priceHt: number;
@@ -119,6 +125,24 @@ export function isGestionLocative(projectType: ProjectType | null): boolean {
 }
 
 /**
+ * Une prestation relève-t-elle de la grille tarifaire ?
+ *
+ * Se fier à `pricingSource` est un piège : le serveur le met à `'fixed'` quand
+ * la recherche en grille échoue (zone absente, tranche de surface non couverte),
+ * en renvoyant `product.priceHt/priceTtc` — or ceux-ci valent toujours `null`
+ * pour un produit grille, donc 0 €. Un diagnostic grille arrive alors ici
+ * déguisé en prestation à prix fixe gratuite : exclu du palier, ajouté à 0 €,
+ * et le blocage anti-devis-à-0 ne se déclenche pas.
+ *
+ * `product.pricingType` est la nature réelle du produit et c'est exactement le
+ * critère qu'applique le serveur pour retarifer (`collectGridDiagnosticItems`).
+ * S'aligner dessus garantit que client et serveur tarifent le même ensemble.
+ */
+export function isGridDiagnostic(suggestion: SuggestedProduct): boolean {
+  return (suggestion.product.pricingType ?? suggestion.pricingSource) === 'grid';
+}
+
+/**
  * Total des suppléments TTC d'une sélection. Ils s'ajoutent au prix de grille ET
  * aux prix fixes, y compris en gestion locative — même règle que le wizard web
  * (`calculateSupplements`, sans garde `isGestionLocative`).
@@ -130,7 +154,7 @@ export function sumSupplementsTtc(suggestions: SuggestedProduct[]): number {
 /**
  * Nombre de diagnostics à envoyer à `calculate-grid-total`.
  *
- * La grille ne tarife QUE les produits `pricingSource === 'grid'` : inclure un
+ * La grille ne tarife QUE les diagnostics grille (cf. `isGridDiagnostic`) : inclure un
  * produit obligatoire à prix fixe (ERP, prélèvement…) fait basculer le calcul
  * sur le palier supérieur de la grille, et ce produit est en plus facturé à son
  * prix propre dans `selectQuoteTotals` — donc double comptage. C'est exactement
@@ -141,7 +165,7 @@ export function countGridDiagnostics(
   selectedProductIds: string[],
 ): number {
   return suggestions.filter(
-    (s) => s.pricingSource === 'grid' && selectedProductIds.includes(s.product.id),
+    (s) => isGridDiagnostic(s) && selectedProductIds.includes(s.product.id),
   ).length;
 }
 
@@ -373,7 +397,7 @@ export function buildSubmitPayload(
     .map((id) => allSuggestions.find((s) => s.product.id === id))
     .filter((s): s is SuggestedProduct => s !== undefined);
 
-  const gridItemCount = selectedSuggestions.filter((s) => s.pricingSource === 'grid').length;
+  const gridItemCount = selectedSuggestions.filter(isGridDiagnostic).length;
   const hasGridTotal = !!state.gridTotal && (state.gridTotal.priceTtc ?? 0) > 0;
   const gridPerItemHt =
     hasGridTotal && gridItemCount > 0 ? (state.gridTotal!.priceHt ?? 0) / gridItemCount : 0;
@@ -383,10 +407,10 @@ export function buildSubmitPayload(
   const gestionLocative = isGestionLocative(state.projectType);
 
   const items = selectedSuggestions.map((suggestion) => {
-    const isGrid = suggestion.pricingSource === 'grid' && hasGridTotal;
+    const isGrid = isGridDiagnostic(suggestion) && hasGridTotal;
     // En gestion locative, les produits à prix fixe sont couverts par le forfait
     // de grille : les facturer en plus ferait dépasser le total affiché.
-    const bundledInPackage = gestionLocative && suggestion.pricingSource === 'fixed';
+    const bundledInPackage = gestionLocative && !isGridDiagnostic(suggestion);
     return {
       productId: suggestion.product.id,
       nameI18n: suggestion.product.nameI18n,

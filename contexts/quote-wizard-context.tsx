@@ -19,7 +19,11 @@ import type {
   SuggestionsResult,
   YearRange,
 } from '@/services/quote-wizard';
-import { isGestionLocative, sumSupplementsTtc } from '@/services/quote-wizard';
+import {
+  isGestionLocative,
+  isGridDiagnostic,
+  sumSupplementsTtc,
+} from '@/services/quote-wizard';
 import {
   clearWizardState,
   loadWizardState,
@@ -48,8 +52,11 @@ export type QuoteTotals = {
 export function selectQuoteTotals(state: WizardState): QuoteTotals {
   const all = [...state.suggestionsObligatoire, ...state.suggestionsFacultatif];
   const selected = all.filter((s) => state.selectedProductIds.includes(s.product.id));
-  const gridSelected = selected.filter((s) => s.pricingSource === 'grid');
-  const fixedSelected = selected.filter((s) => s.pricingSource === 'fixed');
+  // Partition sur `product.pricingType` (via isGridDiagnostic), pas sur
+  // `pricingSource` : un diagnostic grille dont la recherche a échoué arrive
+  // étiqueté 'fixed' à 0 € et fausserait à la fois le palier et le total.
+  const gridSelected = selected.filter(isGridDiagnostic);
+  const fixedSelected = selected.filter((s) => !isGridDiagnostic(s));
 
   let gridTtc = 0;
   if (gridSelected.length > 0) {

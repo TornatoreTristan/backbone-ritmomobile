@@ -222,6 +222,30 @@ describe('selectQuoteTotals', () => {
     expect(totals.totalTtc).toBe(180);
   });
 
+  // Un diagnostic grille rétrogradé en 'fixed' à 0 € par un échec de recherche
+  // grille ne doit pas être compté comme une prestation à prix fixe : sinon le
+  // total tombe à 0 € et le blocage anti-devis-à-0 ne se déclenche pas.
+  it('treats a downgraded grid product as grid, not as a 0 € fixed line', () => {
+    const downgraded: SuggestedProduct = {
+      product: { id: 'dpe', nameI18n: { fr: 'DPE' }, pricingType: 'grid' },
+      result: 'obligatoire',
+      priceHt: 0,
+      priceTtc: 0,
+      pricingSource: 'fixed',
+    };
+    const totals = selectQuoteTotals(
+      makeState({
+        projectType: 'vente',
+        suggestionsObligatoire: [downgraded],
+        selectedProductIds: ['dpe'],
+        gridTotal: null,
+      }),
+    );
+    expect(totals.gridSelected).toHaveLength(1);
+    expect(totals.fixedSelected).toHaveLength(0);
+    expect(totals.fixedTtc).toBe(0);
+  });
+
   it('ignores unselected suggestions', () => {
     const a = makeSuggestion('a', 'fixed', 100);
     const b = makeSuggestion('b', 'fixed', 50);

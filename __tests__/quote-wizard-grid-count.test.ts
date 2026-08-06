@@ -52,4 +52,32 @@ describe('countGridDiagnostics', () => {
     const suggestions = [makeSuggestion('erp', 'fixed'), makeSuggestion('dpe', 'grid')];
     expect(countGridDiagnostics(suggestions, ['erp'])).toBe(0);
   });
+
+  // Quand la recherche en grille échoue (zone absente, tranche de surface non
+  // couverte), le serveur renvoie pricingSource 'fixed' avec product.priceTtc,
+  // qui vaut toujours null → 0 € pour un produit grille. Sans se fier à
+  // `pricingType`, ce diagnostic sortirait du palier et le client tarifierait un
+  // ensemble différent de celui que le serveur retarife à la soumission.
+  it('still counts a grid product downgraded to fixed by a failed grid lookup', () => {
+    const downgraded: SuggestedProduct = {
+      product: { id: 'dpe', nameI18n: { fr: 'DPE' }, pricingType: 'grid' },
+      result: 'obligatoire',
+      priceHt: 0,
+      priceTtc: 0,
+      pricingSource: 'fixed',
+    };
+    const genuinelyFixed: SuggestedProduct = {
+      product: { id: 'erp', nameI18n: { fr: 'ERP' }, pricingType: 'fixed' },
+      result: 'obligatoire',
+      priceHt: 40,
+      priceTtc: 48,
+      pricingSource: 'fixed',
+    };
+    expect(countGridDiagnostics([downgraded, genuinelyFixed], ['dpe', 'erp'])).toBe(1);
+  });
+
+  it('falls back to pricingSource when pricingType is absent', () => {
+    const suggestions = [makeSuggestion('dpe', 'grid'), makeSuggestion('erp', 'fixed')];
+    expect(countGridDiagnostics(suggestions, ['dpe', 'erp'])).toBe(1);
+  });
 });

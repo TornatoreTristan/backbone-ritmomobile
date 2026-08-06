@@ -10,6 +10,8 @@ import {
   PROJECT_TYPE_TO_TRANSACTION,
   YEAR_RANGE_MAP,
   calculateGridTotal,
+  countGridDiagnostics,
+  gridCategoryFor,
   normalizePropertyType,
   suggestDiagnostics,
 } from '@/services/quote-wizard';
@@ -63,16 +65,33 @@ export default function Step6Screen() {
         hasElectricity: true,
       }, staffOrgId);
 
-      setSuggestions(suggestions);
+      const selectedIds = setSuggestions(suggestions);
 
-      const gridTotal = await calculateGridTotal({
-        postalCode: state.postalCode,
-        propertyType,
-        diagnosticCount: suggestions.obligatoire.length,
-        ...(surfaceArea !== null ? { surfaceArea } : {}),
-      }, staffOrgId);
+      // Compter TOUTES les suggestions (pas seulement les obligatoires) filtrées
+      // sur la sélection réelle : à la reprise d'un brouillon, des facultatifs
+      // peuvent être re-sélectionnés par setSuggestions.
+      const gridCount = countGridDiagnostics(
+        [...suggestions.obligatoire, ...suggestions.facultatif],
+        selectedIds,
+      );
 
-      setGridTotal(gridTotal);
+      const gridCategory = gridCategoryFor(state.projectType);
+
+      if (gridCount > 0) {
+        const gridTotal = await calculateGridTotal({
+          postalCode: state.postalCode,
+          propertyType,
+          diagnosticCount: gridCount,
+          ...(surfaceArea !== null ? { surfaceArea } : {}),
+          ...(gridCategory ? { gridCategory } : {}),
+        }, staffOrgId);
+
+        setGridTotal(gridTotal, gridCount);
+      } else {
+        // Aucun diagnostic grille : pas d'appel (l'API exige diagnosticCount >= 1),
+        // le total se limite aux produits à prix fixe.
+        setGridTotal(null, 0);
+      }
 
       router.push('/quote-wizard/step-7');
     } catch {

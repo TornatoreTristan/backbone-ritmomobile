@@ -23,6 +23,9 @@ export type YearRange =
 
 export type GasState = 'oui' | 'non' | 'ne_sait_pas';
 
+/** Catégorie de grille tarifaire côté backend (`GRID_CATEGORIES`). */
+export type GridCategory = 'standard' | 'gestion_locative';
+
 export type OwnershipType = 'individuel' | 'copropriete' | string;
 
 export type BdnbBuilding = {
@@ -43,6 +46,15 @@ export type SuggestedProduct = {
     nameI18n: { fr: string; en?: string };
     descriptionI18n?: { fr?: string; en?: string };
     iconUrl?: string | null;
+    /**
+     * Supplément facturé en plus du prix de la ligne (surface, déplacement…).
+     * Renvoyé par l'API sur chaque produit ; il s'ajoute au total quelle que
+     * soit la tarification (grille ou fixe) et n'est jamais couvert par le
+     * forfait gestion locative.
+     */
+    priceSupplementHt?: number | null;
+    priceSupplementTtc?: number | null;
+    supplementLabel?: string | null;
   };
   result: 'obligatoire' | 'facultatif';
   priceHt: number;
@@ -84,6 +96,53 @@ export const YEAR_RANGE_MAP: Record<YearRange, number> = {
 export function normalizePropertyType(propertyType: string): string {
   if (propertyType === 'local_bureau') return 'local_commercial';
   return propertyType;
+}
+
+/**
+ * La gestion locative se tarife sur une grille dédiée (forfaitaire, sans zone ni
+ * tranche de surface). Le backend retombe sur la grille `standard` dès que la
+ * catégorie n'est pas transmise, et `projectType` ne suffit pas à la déduire
+ * puisqu'il est aplati en `location` — d'où ce champ explicite, à joindre à
+ * TOUS les appels tarifaires (calcul du total ET soumission).
+ */
+export function gridCategoryFor(projectType: ProjectType | null): GridCategory | undefined {
+  return projectType === 'gestion_locative' ? 'gestion_locative' : undefined;
+}
+
+/**
+ * En gestion locative, le forfait de grille couvre l'ensemble de la prestation :
+ * les produits à prix fixe sont inclus et ne se facturent pas en plus. Même règle
+ * que le wizard web (`getFinalTotal` / `computeClassicPricing`).
+ */
+export function isGestionLocative(projectType: ProjectType | null): boolean {
+  return projectType === 'gestion_locative';
+}
+
+/**
+ * Total des suppléments TTC d'une sélection. Ils s'ajoutent au prix de grille ET
+ * aux prix fixes, y compris en gestion locative — même règle que le wizard web
+ * (`calculateSupplements`, sans garde `isGestionLocative`).
+ */
+export function sumSupplementsTtc(suggestions: SuggestedProduct[]): number {
+  return suggestions.reduce((sum, s) => sum + (s.product.priceSupplementTtc ?? 0), 0);
+}
+
+/**
+ * Nombre de diagnostics à envoyer à `calculate-grid-total`.
+ *
+ * La grille ne tarife QUE les produits `pricingSource === 'grid'` : inclure un
+ * produit obligatoire à prix fixe (ERP, prélèvement…) fait basculer le calcul
+ * sur le palier supérieur de la grille, et ce produit est en plus facturé à son
+ * prix propre dans `selectQuoteTotals` — donc double comptage. C'est exactement
+ * le `countGridProducts` du wizard web ; ne jamais compter autre chose ici.
+ */
+export function countGridDiagnostics(
+  suggestions: SuggestedProduct[],
+  selectedProductIds: string[],
+): number {
+  return suggestions.filter(
+    (s) => s.pricingSource === 'grid' && selectedProductIds.includes(s.product.id),
+  ).length;
 }
 
 type BdnbSearchPayload = {
@@ -133,7 +192,7 @@ type GridTotalPayload = {
   propertyType: string;
   diagnosticCount: number;
   surfaceArea?: number;
-  gridCategory?: string;
+  gridCategory?: GridCategory;
 };
 
 type GridTotalResponse = {
@@ -155,6 +214,12 @@ export async function calculateGridTotal(payload: GridTotalPayload, orgId?: stri
 
 export type WizardSubmitPayload = {
   projectType: string;
+  /**
+   * Transmis uniquement en gestion locative. Le serveur retarife les diagnostics
+   * depuis la grille avant de créer le dossier : sans cette catégorie il utilise
+   * la grille standard et écrase les prix calculés ici.
+   */
+  gridCategory?: GridCategory;
   postalCode: string;
   address: string | null;
   city: string | null;
@@ -196,6 +261,7 @@ export type WizardSubmitPayload = {
     unitPriceTtc: number;
     supplementHt?: number;
     supplementTtc?: number;
+    supplementLabel?: string | null;
   }[];
   clientComments: string | null;
   sendQuoteToClient: boolean;
@@ -314,16 +380,24 @@ export function buildSubmitPayload(
   const gridPerItemTtc =
     hasGridTotal && gridItemCount > 0 ? (state.gridTotal!.priceTtc ?? 0) / gridItemCount : 0;
 
+  const gestionLocative = isGestionLocative(state.projectType);
+
   const items = selectedSuggestions.map((suggestion) => {
     const isGrid = suggestion.pricingSource === 'grid' && hasGridTotal;
+    // En gestion locative, les produits à prix fixe sont couverts par le forfait
+    // de grille : les facturer en plus ferait dépasser le total affiché.
+    const bundledInPackage = gestionLocative && suggestion.pricingSource === 'fixed';
     return {
       productId: suggestion.product.id,
       nameI18n: suggestion.product.nameI18n,
       quantity: 1,
-      unitPriceHt: isGrid ? gridPerItemHt : suggestion.priceHt,
-      unitPriceTtc: isGrid ? gridPerItemTtc : suggestion.priceTtc,
-      supplementHt: 0,
-      supplementTtc: 0,
+      unitPriceHt: isGrid ? gridPerItemHt : bundledInPackage ? 0 : suggestion.priceHt,
+      unitPriceTtc: isGrid ? gridPerItemTtc : bundledInPackage ? 0 : suggestion.priceTtc,
+      // Le supplément se facture en plus du prix de ligne, y compris quand la
+      // ligne est couverte par le forfait gestion locative.
+      supplementHt: suggestion.product.priceSupplementHt ?? 0,
+      supplementTtc: suggestion.product.priceSupplementTtc ?? 0,
+      supplementLabel: suggestion.product.supplementLabel ?? null,
     };
   });
 
@@ -349,8 +423,11 @@ export function buildSubmitPayload(
   }
   const transactionType: TransactionType = PROJECT_TYPE_TO_TRANSACTION[state.projectType];
 
+  const gridCategory = gridCategoryFor(state.projectType);
+
   return {
     projectType: transactionType,
+    ...(gridCategory ? { gridCategory } : {}),
     postalCode: state.postalCode,
     address: nullIfEmpty(state.address),
     city: nullIfEmpty(state.propertyCity),

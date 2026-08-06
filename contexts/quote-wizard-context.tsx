@@ -19,11 +19,21 @@ import type {
   SuggestionsResult,
   YearRange,
 } from '@/services/quote-wizard';
+import { isGestionLocative, sumSupplementsTtc } from '@/services/quote-wizard';
 import {
   clearWizardState,
   loadWizardState,
   saveWizardState,
 } from '@/services/quote-wizard-storage';
+
+/**
+ * Total grille tel que stocké dans le wizard : la réponse serveur + le nombre de
+ * diagnostics grille pour lequel elle a été demandée. `requestedCount` permet à
+ * l'étape 7 de détecter un total périmé (sélection modifiée depuis le calcul) —
+ * `diagnosticCount` renvoyé par l'API ne convient pas, c'est le palier de grille
+ * effectivement retenu, qui peut différer du nombre demandé.
+ */
+export type StoredGridTotal = GridTotalResult & { requestedCount?: number };
 
 export type QuoteTotals = {
   selected: SuggestedProduct[];
@@ -31,6 +41,7 @@ export type QuoteTotals = {
   fixedSelected: SuggestedProduct[];
   gridTtc: number;
   fixedTtc: number;
+  supplementsTtc: number;
   totalTtc: number;
 };
 
@@ -49,7 +60,16 @@ export function selectQuoteTotals(state: WizardState): QuoteTotals {
       gridTtc = gridSelected.reduce((sum, s) => sum + s.priceTtc, 0);
     }
   }
-  const fixedTtc = fixedSelected.reduce((sum, s) => sum + s.priceTtc, 0);
+  // Gestion locative : le forfait de grille couvre l'ensemble de la prestation,
+  // les produits à prix fixe ne s'ajoutent pas par-dessus (règle du wizard web,
+  // `getFinalTotal`). `buildSubmitPayload` les envoie donc aussi à 0 €.
+  const fixedTtc = isGestionLocative(state.projectType)
+    ? 0
+    : fixedSelected.reduce((sum, s) => sum + s.priceTtc, 0);
+
+  // Les suppléments produits (surface, déplacement…) s'ajoutent au prix de la
+  // ligne, grille ou fixe, et restent dus en gestion locative.
+  const supplementsTtc = sumSupplementsTtc(selected);
 
   return {
     selected,
@@ -57,7 +77,8 @@ export function selectQuoteTotals(state: WizardState): QuoteTotals {
     fixedSelected,
     gridTtc,
     fixedTtc,
-    totalTtc: gridTtc + fixedTtc,
+    supplementsTtc,
+    totalTtc: gridTtc + fixedTtc + supplementsTtc,
   };
 }
 
@@ -91,7 +112,7 @@ export type WizardState = {
   suggestionsObligatoire: SuggestedProduct[];
   suggestionsFacultatif: SuggestedProduct[];
   selectedProductIds: string[];
-  gridTotal: GridTotalResult | null;
+  gridTotal: StoredGridTotal | null;
 
   ownerType: string | null;
   companyName: string;
@@ -202,9 +223,10 @@ type WizardContextType = {
   removeDependance: (id: string) => void;
   updateDependance: (id: string, patch: Partial<{ nom: string; superficie: string }>) => void;
   toggleProduct: (productId: string) => string[];
-  setSuggestions: (suggestions: SuggestionsResult) => void;
+  /** Retourne les ids sélectionnés après application des suggestions. */
+  setSuggestions: (suggestions: SuggestionsResult) => string[];
   setBdnb: (result: BdnbSearchResult) => void;
-  setGridTotal: (result: GridTotalResult) => void;
+  setGridTotal: (result: GridTotalResult | null, requestedCount: number) => void;
   hasPendingState: boolean;
   pendingStep: number;
   restoreState: () => Promise<void>;
@@ -221,7 +243,7 @@ const WizardContext = createContext<WizardContextType>({
   removeDependance: () => {},
   updateDependance: () => {},
   toggleProduct: () => [],
-  setSuggestions: () => {},
+  setSuggestions: () => [],
   setBdnb: () => {},
   setGridTotal: () => {},
   hasPendingState: false,
@@ -346,30 +368,34 @@ export function QuoteWizardProvider({ children }: PropsWithChildren) {
     return next;
   }
 
-  function setSuggestions(suggestions: SuggestionsResult) {
+  // La sélection est résolue HORS de l'updater (et non plus dedans) pour deux
+  // raisons : l'appelant a besoin des ids retenus pour calculer le nombre de
+  // diagnostics grille à tarifer, et `wasRestoredRef` ne doit être consommé
+  // qu'une fois — un updater peut être rejoué (StrictMode).
+  function setSuggestions(suggestions: SuggestionsResult): string[] {
     const obligatoireIds = suggestions.obligatoire.map((s) => s.product.id);
     const allIds = [
       ...obligatoireIds,
       ...suggestions.facultatif.map((s) => s.product.id),
     ];
-    setState((prev) => {
-      let nextSelected: string[];
-      if (wasRestoredRef.current) {
-        wasRestoredRef.current = false;
-        const restoredValid = prev.selectedProductIds.filter((id) => allIds.includes(id));
-        const merged = new Set([...obligatoireIds, ...restoredValid]);
-        nextSelected = Array.from(merged);
-      } else {
-        nextSelected = obligatoireIds;
-      }
-      selectedProductIdsRef.current = nextSelected;
-      return {
-        ...prev,
-        suggestionsObligatoire: suggestions.obligatoire,
-        suggestionsFacultatif: suggestions.facultatif,
-        selectedProductIds: nextSelected,
-      };
-    });
+
+    let nextSelected: string[];
+    if (wasRestoredRef.current) {
+      wasRestoredRef.current = false;
+      const restoredValid = selectedProductIdsRef.current.filter((id) => allIds.includes(id));
+      nextSelected = Array.from(new Set([...obligatoireIds, ...restoredValid]));
+    } else {
+      nextSelected = obligatoireIds;
+    }
+
+    selectedProductIdsRef.current = nextSelected;
+    setState((prev) => ({
+      ...prev,
+      suggestionsObligatoire: suggestions.obligatoire,
+      suggestionsFacultatif: suggestions.facultatif,
+      selectedProductIds: nextSelected,
+    }));
+    return nextSelected;
   }
 
   function setBdnb(result: BdnbSearchResult) {
@@ -380,8 +406,11 @@ export function QuoteWizardProvider({ children }: PropsWithChildren) {
     }));
   }
 
-  function setGridTotal(result: GridTotalResult) {
-    setState((prev) => ({ ...prev, gridTotal: result }));
+  function setGridTotal(result: GridTotalResult | null, requestedCount: number) {
+    setState((prev) => ({
+      ...prev,
+      gridTotal: result ? { ...result, requestedCount } : null,
+    }));
   }
 
   return (

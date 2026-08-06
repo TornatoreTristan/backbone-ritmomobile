@@ -149,6 +149,79 @@ describe('selectQuoteTotals', () => {
     expect(totals.totalTtc).toBe(250);
   });
 
+  // En gestion locative le forfait de grille couvre tout : les produits à prix
+  // fixe ne s'ajoutent pas par-dessus (même règle que le wizard web).
+  it('excludes fixed prices in gestion_locative', () => {
+    const a = makeSuggestion('a', 'grid', 80);
+    const b = makeSuggestion('b', 'fixed', 100, 'facultatif');
+    const overrides = {
+      suggestionsObligatoire: [a],
+      suggestionsFacultatif: [b],
+      selectedProductIds: ['a', 'b'],
+      gridTotal: { priceTtc: 150 },
+    };
+
+    const gestionLocative = selectQuoteTotals(
+      makeState({ ...overrides, projectType: 'gestion_locative' as const }),
+    );
+    expect(gestionLocative.fixedTtc).toBe(0);
+    expect(gestionLocative.totalTtc).toBe(150);
+
+    const location = selectQuoteTotals(
+      makeState({ ...overrides, projectType: 'location' as const }),
+    );
+    expect(location.fixedTtc).toBe(100);
+    expect(location.totalTtc).toBe(250);
+  });
+
+  // Les suppléments (surface, déplacement…) étaient purement ignorés par le
+  // mobile : total affiché et dossier créé sous-évalués sur les organisations
+  // qui en configurent.
+  it('adds product supplements on top of grid and fixed prices', () => {
+    const a: SuggestedProduct = {
+      ...makeSuggestion('a', 'grid', 80),
+      product: { id: 'a', nameI18n: { fr: 'a' }, priceSupplementTtc: 30 },
+    };
+    const b: SuggestedProduct = {
+      ...makeSuggestion('b', 'fixed', 100, 'facultatif'),
+      product: { id: 'b', nameI18n: { fr: 'b' }, priceSupplementTtc: 12 },
+    };
+    const totals = selectQuoteTotals(
+      makeState({
+        projectType: 'vente',
+        suggestionsObligatoire: [a],
+        suggestionsFacultatif: [b],
+        selectedProductIds: ['a', 'b'],
+        gridTotal: { priceTtc: 150 },
+      }),
+    );
+    expect(totals.supplementsTtc).toBe(42);
+    expect(totals.totalTtc).toBe(150 + 100 + 42);
+  });
+
+  it('keeps supplements due in gestion_locative, unlike fixed prices', () => {
+    const a: SuggestedProduct = {
+      ...makeSuggestion('a', 'grid', 80),
+      product: { id: 'a', nameI18n: { fr: 'a' }, priceSupplementTtc: 30 },
+    };
+    const b: SuggestedProduct = {
+      ...makeSuggestion('b', 'fixed', 100, 'facultatif'),
+      product: { id: 'b', nameI18n: { fr: 'b' } },
+    };
+    const totals = selectQuoteTotals(
+      makeState({
+        projectType: 'gestion_locative',
+        suggestionsObligatoire: [a],
+        suggestionsFacultatif: [b],
+        selectedProductIds: ['a', 'b'],
+        gridTotal: { priceTtc: 150 },
+      }),
+    );
+    expect(totals.fixedTtc).toBe(0);
+    expect(totals.supplementsTtc).toBe(30);
+    expect(totals.totalTtc).toBe(180);
+  });
+
   it('ignores unselected suggestions', () => {
     const a = makeSuggestion('a', 'fixed', 100);
     const b = makeSuggestion('b', 'fixed', 50);

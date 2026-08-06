@@ -105,6 +105,44 @@ describe('buildSubmitPayload', () => {
     expect(buildSubmitPayload(state, dummyUser, false).projectType).toBe('location');
   });
 
+  // `projectType` étant aplati en `location`, seul `gridCategory` permet au
+  // serveur de retarifer sur la grille gestion locative plutôt que la standard.
+  it('sends gridCategory only for gestion_locative', () => {
+    const base = {
+      propertyType: 'appartement',
+      postalCode: '75001',
+      contactSearch: 'Jean',
+    };
+    expect(
+      buildSubmitPayload(makeState({ ...base, projectType: 'gestion_locative' }), dummyUser, false)
+        .gridCategory,
+    ).toBe('gestion_locative');
+    expect(
+      buildSubmitPayload(makeState({ ...base, projectType: 'location' }), dummyUser, false)
+        .gridCategory,
+    ).toBeUndefined();
+  });
+
+  // Le forfait gestion locative couvre tout : facturer les produits à prix fixe
+  // en plus ferait dépasser le total affiché à l'utilisateur.
+  it('bundles fixed-priced products at 0 € in gestion_locative', () => {
+    const a = makeSuggestion('a', 'grid', 50);
+    const c = makeSuggestion('c', 'fixed', 80, 'facultatif');
+    const state = makeState({
+      projectType: 'gestion_locative',
+      propertyType: 'appartement',
+      postalCode: '75001',
+      contactSearch: 'A',
+      suggestionsObligatoire: [a],
+      suggestionsFacultatif: [c],
+      selectedProductIds: ['a', 'c'],
+      gridTotal: { priceHt: 200, priceTtc: 240 },
+    });
+    const payload = buildSubmitPayload(state, dummyUser, false);
+    expect(payload.items.find((i) => i.productId === 'a')?.unitPriceTtc).toBe(240);
+    expect(payload.items.find((i) => i.productId === 'c')?.unitPriceTtc).toBe(0);
+  });
+
   it('uses exactYear when set, else falls back to yearRange', () => {
     const exactState = makeState({
       projectType: 'vente',
@@ -247,6 +285,47 @@ describe('buildSubmitPayload', () => {
     expect(aItem?.unitPriceTtc).toBe(120);
     expect(bItem?.unitPriceTtc).toBe(120);
     expect(cItem?.unitPriceTtc).toBe(80);
+  });
+
+  it('forwards product supplements on each item', () => {
+    const a = makeSuggestion('a', 'grid', 50);
+    a.product = {
+      id: 'a',
+      nameI18n: { fr: 'a' },
+      priceSupplementHt: 25,
+      priceSupplementTtc: 30,
+      supplementLabel: 'Surface > 100 m²',
+    };
+    const state = makeState({
+      projectType: 'vente',
+      propertyType: 'appartement',
+      postalCode: '75001',
+      contactSearch: 'A',
+      suggestionsObligatoire: [a],
+      selectedProductIds: ['a'],
+      gridTotal: { priceHt: 100, priceTtc: 120 },
+    });
+    const item = buildSubmitPayload(state, dummyUser, false).items[0];
+    expect(item.supplementHt).toBe(25);
+    expect(item.supplementTtc).toBe(30);
+    expect(item.supplementLabel).toBe('Surface > 100 m²');
+  });
+
+  it('defaults supplements to 0 when the product has none', () => {
+    const a = makeSuggestion('a', 'grid', 50);
+    const state = makeState({
+      projectType: 'vente',
+      propertyType: 'appartement',
+      postalCode: '75001',
+      contactSearch: 'A',
+      suggestionsObligatoire: [a],
+      selectedProductIds: ['a'],
+      gridTotal: { priceHt: 100, priceTtc: 120 },
+    });
+    const item = buildSubmitPayload(state, dummyUser, false).items[0];
+    expect(item.supplementHt).toBe(0);
+    expect(item.supplementTtc).toBe(0);
+    expect(item.supplementLabel).toBeNull();
   });
 
   it('only includes billing fields when billingDifferent is true', () => {

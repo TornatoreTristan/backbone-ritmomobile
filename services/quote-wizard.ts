@@ -116,15 +116,6 @@ export function gridCategoryFor(projectType: ProjectType | null): GridCategory |
 }
 
 /**
- * En gestion locative, le forfait de grille couvre l'ensemble de la prestation :
- * les produits à prix fixe sont inclus et ne se facturent pas en plus. Même règle
- * que le wizard web (`getFinalTotal` / `computeClassicPricing`).
- */
-export function isGestionLocative(projectType: ProjectType | null): boolean {
-  return projectType === 'gestion_locative';
-}
-
-/**
  * Une prestation relève-t-elle de la grille tarifaire ?
  *
  * Se fier à `pricingSource` est un piège : le serveur le met à `'fixed'` quand
@@ -404,19 +395,16 @@ export function buildSubmitPayload(
   const gridPerItemTtc =
     hasGridTotal && gridItemCount > 0 ? (state.gridTotal!.priceTtc ?? 0) / gridItemCount : 0;
 
-  const gestionLocative = isGestionLocative(state.projectType);
-
   const items = selectedSuggestions.map((suggestion) => {
     const isGrid = isGridDiagnostic(suggestion) && hasGridTotal;
-    // En gestion locative, les produits à prix fixe sont couverts par le forfait
-    // de grille : les facturer en plus ferait dépasser le total affiché.
-    const bundledInPackage = gestionLocative && !isGridDiagnostic(suggestion);
     return {
       productId: suggestion.product.id,
       nameI18n: suggestion.product.nameI18n,
       quantity: 1,
-      unitPriceHt: isGrid ? gridPerItemHt : bundledInPackage ? 0 : suggestion.priceHt,
-      unitPriceTtc: isGrid ? gridPerItemTtc : bundledInPackage ? 0 : suggestion.priceTtc,
+      // Les diagnostics grille se partagent le forfait ; les prestations à prix
+      // fixe gardent leur prix.
+      unitPriceHt: isGrid ? gridPerItemHt : suggestion.priceHt,
+      unitPriceTtc: isGrid ? gridPerItemTtc : suggestion.priceTtc,
       // Le supplément se facture en plus du prix de ligne, y compris quand la
       // ligne est couverte par le forfait gestion locative.
       supplementHt: suggestion.product.priceSupplementHt ?? 0,

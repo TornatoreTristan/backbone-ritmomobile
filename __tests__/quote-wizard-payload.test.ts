@@ -123,9 +123,9 @@ describe('buildSubmitPayload', () => {
     ).toBeUndefined();
   });
 
-  // Le forfait gestion locative couvre tout : facturer les produits à prix fixe
-  // en plus ferait dépasser le total affiché à l'utilisateur.
-  it('bundles fixed-priced products at 0 € in gestion_locative', () => {
+  // Les prestations à prix fixe gardent leur prix en gestion locative aussi :
+  // seule la grille consultée change.
+  it('keeps fixed-priced products at their price in gestion_locative', () => {
     const a = makeSuggestion('a', 'grid', 50);
     const c = makeSuggestion('c', 'fixed', 80, 'facultatif');
     const state = makeState({
@@ -140,7 +140,7 @@ describe('buildSubmitPayload', () => {
     });
     const payload = buildSubmitPayload(state, dummyUser, false);
     expect(payload.items.find((i) => i.productId === 'a')?.unitPriceTtc).toBe(240);
-    expect(payload.items.find((i) => i.productId === 'c')?.unitPriceTtc).toBe(0);
+    expect(payload.items.find((i) => i.productId === 'c')?.unitPriceTtc).toBe(80);
   });
 
   it('uses exactYear when set, else falls back to yearRange', () => {

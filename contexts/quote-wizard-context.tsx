@@ -19,11 +19,7 @@ import type {
   SuggestionsResult,
   YearRange,
 } from '@/services/quote-wizard';
-import {
-  isGestionLocative,
-  isGridDiagnostic,
-  sumSupplementsTtc,
-} from '@/services/quote-wizard';
+import { isGridDiagnostic, sumSupplementsTtc } from '@/services/quote-wizard';
 import {
   clearWizardState,
   loadWizardState,
@@ -67,12 +63,9 @@ export function selectQuoteTotals(state: WizardState): QuoteTotals {
       gridTtc = gridSelected.reduce((sum, s) => sum + s.priceTtc, 0);
     }
   }
-  // Gestion locative : le forfait de grille couvre l'ensemble de la prestation,
-  // les produits à prix fixe ne s'ajoutent pas par-dessus (règle du wizard web,
-  // `getFinalTotal`). `buildSubmitPayload` les envoie donc aussi à 0 €.
-  const fixedTtc = isGestionLocative(state.projectType)
-    ? 0
-    : fixedSelected.reduce((sum, s) => sum + s.priceTtc, 0);
+  // Les prestations à prix fixe sont toujours facturées à leur prix, quel que
+  // soit le type de projet.
+  const fixedTtc = fixedSelected.reduce((sum, s) => sum + s.priceTtc, 0);
 
   // Les suppléments produits (surface, déplacement…) s'ajoutent au prix de la
   // ligne, grille ou fixe, et restent dus en gestion locative.

@@ -149,9 +149,9 @@ describe('selectQuoteTotals', () => {
     expect(totals.totalTtc).toBe(250);
   });
 
-  // En gestion locative le forfait de grille couvre tout : les produits à prix
-  // fixe ne s'ajoutent pas par-dessus (même règle que le wizard web).
-  it('excludes fixed prices in gestion_locative', () => {
+  // Les prestations à prix fixe comptent toujours à leur prix, gestion locative
+  // comprise : le type de projet ne change que la grille utilisée.
+  it('counts fixed prices whatever the project type', () => {
     const a = makeSuggestion('a', 'grid', 80);
     const b = makeSuggestion('b', 'fixed', 100, 'facultatif');
     const overrides = {
@@ -161,17 +161,11 @@ describe('selectQuoteTotals', () => {
       gridTotal: { priceTtc: 150 },
     };
 
-    const gestionLocative = selectQuoteTotals(
-      makeState({ ...overrides, projectType: 'gestion_locative' as const }),
-    );
-    expect(gestionLocative.fixedTtc).toBe(0);
-    expect(gestionLocative.totalTtc).toBe(150);
-
-    const location = selectQuoteTotals(
-      makeState({ ...overrides, projectType: 'location' as const }),
-    );
-    expect(location.fixedTtc).toBe(100);
-    expect(location.totalTtc).toBe(250);
+    for (const projectType of ['location', 'gestion_locative'] as const) {
+      const totals = selectQuoteTotals(makeState({ ...overrides, projectType }));
+      expect(totals.fixedTtc).toBe(100);
+      expect(totals.totalTtc).toBe(250);
+    }
   });
 
   // Les suppléments (surface, déplacement…) étaient purement ignorés par le
@@ -197,29 +191,6 @@ describe('selectQuoteTotals', () => {
     );
     expect(totals.supplementsTtc).toBe(42);
     expect(totals.totalTtc).toBe(150 + 100 + 42);
-  });
-
-  it('keeps supplements due in gestion_locative, unlike fixed prices', () => {
-    const a: SuggestedProduct = {
-      ...makeSuggestion('a', 'grid', 80),
-      product: { id: 'a', nameI18n: { fr: 'a' }, priceSupplementTtc: 30 },
-    };
-    const b: SuggestedProduct = {
-      ...makeSuggestion('b', 'fixed', 100, 'facultatif'),
-      product: { id: 'b', nameI18n: { fr: 'b' } },
-    };
-    const totals = selectQuoteTotals(
-      makeState({
-        projectType: 'gestion_locative',
-        suggestionsObligatoire: [a],
-        suggestionsFacultatif: [b],
-        selectedProductIds: ['a', 'b'],
-        gridTotal: { priceTtc: 150 },
-      }),
-    );
-    expect(totals.fixedTtc).toBe(0);
-    expect(totals.supplementsTtc).toBe(30);
-    expect(totals.totalTtc).toBe(180);
   });
 
   // Un diagnostic grille rétrogradé en 'fixed' à 0 € par un échec de recherche

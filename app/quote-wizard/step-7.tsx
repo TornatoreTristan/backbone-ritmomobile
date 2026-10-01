@@ -12,6 +12,7 @@ import {
   normalizePropertyType,
   type SuggestedProduct,
 } from '@/services/quote-wizard';
+import { describeWizardError, reportWizardError } from '@/services/quote-wizard-errors';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -101,7 +102,7 @@ export default function Step7Screen() {
 
   const [updatingProductId, setUpdatingProductId] = useState<string | null>(null);
   const [gridLoading, setGridLoading] = useState(false);
-  const [gridError, setGridError] = useState(false);
+  const [gridError, setGridError] = useState<string | null>(null);
 
   const allSuggestions = [...state.suggestionsObligatoire, ...state.suggestionsFacultatif];
   const totals = selectQuoteTotals(state);
@@ -125,32 +126,35 @@ export default function Step7Screen() {
     // L'API refuse diagnosticCount < 1 : sans diagnostic grille, il n'y a pas de
     // prix de grille à afficher, seulement les produits à prix fixe.
     if (gridProductCount === 0) {
-      setGridError(false);
+      setGridError(null);
       setGridTotal(null, 0);
       return;
     }
 
     const requestId = ++requestIdRef.current;
     setGridLoading(true);
-    setGridError(false);
-    try {
-      const surfaceArea = state.surfaceArea.trim() ? parseFloat(state.surfaceArea) : undefined;
-      const propertyType = normalizePropertyType(state.propertyType ?? '');
-      const gridCategory = gridCategoryFor(state.projectType);
+    setGridError(null);
 
-      const gridTotal = await calculateGridTotal({
-        postalCode: state.postalCode,
-        propertyType,
-        diagnosticCount: gridProductCount,
-        ...(surfaceArea !== undefined ? { surfaceArea } : {}),
-        ...(gridCategory ? { gridCategory } : {}),
-      }, staffOrgId);
+    // NaN (saisie illisible) serait sérialisé en `null` et rejeté en 422.
+    const parsedSurface = parseFloat(state.surfaceArea);
+    const gridCategory = gridCategoryFor(state.projectType);
+    const payload = {
+      postalCode: state.postalCode,
+      propertyType: normalizePropertyType(state.propertyType ?? ''),
+      diagnosticCount: gridProductCount,
+      ...(Number.isFinite(parsedSurface) ? { surfaceArea: parsedSurface } : {}),
+      ...(gridCategory ? { gridCategory } : {}),
+    };
+
+    try {
+      const gridTotal = await calculateGridTotal(payload, staffOrgId);
 
       if (requestId !== requestIdRef.current) return;
       setGridTotal(gridTotal, gridProductCount);
-    } catch {
+    } catch (err) {
+      reportWizardError(err, 'step-7', 'calculate-grid-total', payload);
       if (requestId !== requestIdRef.current) return;
-      setGridError(true);
+      setGridError(describeWizardError(err, 'Impossible de calculer le prix grille.'));
     } finally {
       if (requestId === requestIdRef.current) setGridLoading(false);
     }
@@ -256,9 +260,24 @@ export default function Step7Screen() {
             )}
           </View>
           {gridError ? (
-            <ThemedText style={[styles.gridErrorText, { color: colors.destructive }]}>
-              Impossible de calculer le prix grille. Touchez un diagnostic pour réessayer.
-            </ThemedText>
+            <View style={styles.gridErrorBlock}>
+              <ThemedText style={[styles.gridErrorText, { color: colors.destructive }]}>
+                {gridError}
+              </ThemedText>
+              <Pressable
+                onPress={() => fetchGridTotal(selectedGridCount)}
+                disabled={gridLoading}
+                accessibilityRole="button"
+                accessibilityLabel="Réessayer le calcul du prix"
+                style={({ pressed }) => [
+                  styles.retryButton,
+                  { borderColor: colors.foreground, opacity: pressed || gridLoading ? 0.5 : 1 },
+                ]}>
+                <ThemedText style={[styles.retryText, { color: colors.foreground }]}>
+                  Réessayer
+                </ThemedText>
+              </Pressable>
+            </View>
           ) : gridPriceMissing ? (
             <ThemedText style={[styles.gridErrorText, { color: colors.destructive }]}>
               {gridLoading
@@ -376,6 +395,14 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
   },
+  gridErrorBlock: { gap: 10 },
+  retryButton: {
+    paddingVertical: 8,
+    borderRadius: Radius.md,
+    borderWidth: 1.5,
+    alignItems: 'center',
+  },
+  retryText: { fontSize: 14, fontWeight: '500' },
   gridErrorText: {
     fontSize: 12,
     fontWeight: '500',

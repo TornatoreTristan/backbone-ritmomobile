@@ -183,8 +183,9 @@ type SuggestPayload = {
   postalCode: string;
   propertyType: string;
   transactionType: TransactionType;
-  constructionYear: number | null;
-  surfaceArea: number | null;
+  // Omis plutôt que `null` : le validateur backend (`.optional()`) refuse `null`.
+  constructionYear?: number;
+  surfaceArea?: number;
   hasGas: boolean;
   hasElectricity?: boolean;
 };

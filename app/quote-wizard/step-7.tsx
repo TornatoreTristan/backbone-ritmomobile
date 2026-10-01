@@ -5,9 +5,16 @@ import { Radius } from '@/constants/theme';
 import { useOrganization } from '@/contexts/organization-context';
 import { selectQuoteTotals, useQuoteWizard } from '@/contexts/quote-wizard-context';
 import { useColors } from '@/hooks/use-theme-color';
-import { calculateGridTotal, normalizePropertyType, type SuggestedProduct } from '@/services/quote-wizard';
+import {
+  calculateGridTotal,
+  countGridDiagnostics,
+  gridCategoryFor,
+  normalizePropertyType,
+  type SuggestedProduct,
+} from '@/services/quote-wizard';
+import { describeWizardError, reportWizardError } from '@/services/quote-wizard-errors';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -95,46 +102,70 @@ export default function Step7Screen() {
 
   const [updatingProductId, setUpdatingProductId] = useState<string | null>(null);
   const [gridLoading, setGridLoading] = useState(false);
-  const [gridError, setGridError] = useState(false);
+  const [gridError, setGridError] = useState<string | null>(null);
 
   const allSuggestions = [...state.suggestionsObligatoire, ...state.suggestionsFacultatif];
   const totals = selectQuoteTotals(state);
 
-  const selectedGridCount = allSuggestions.filter(
-    (s) => s.pricingSource === 'grid' && state.selectedProductIds.includes(s.product.id),
-  ).length;
+  const selectedGridCount = countGridDiagnostics(allSuggestions, state.selectedProductIds);
   const hasValidGridTotal = !!state.gridTotal && (state.gridTotal.priceTtc ?? 0) > 0;
   // Bloque l'envoi si des diagnostics grille sont sélectionnés mais qu'on n'a pas
   // de prix grille valide : sans ça l'app enverrait des diagnostics à 0 €.
   const gridPriceMissing = selectedGridCount > 0 && !hasValidGridTotal;
 
+  // Nombre pour lequel un calcul a déjà été lancé — initialisé depuis le total
+  // hérité de l'étape 6 pour ne pas refaire l'appel inutilement à l'arrivée.
+  const requestedCountRef = useRef<number | null>(state.gridTotal?.requestedCount ?? null);
+  // Garde anti-course : deux toggles rapides ne doivent pas laisser la réponse
+  // la plus lente écraser la plus récente.
+  const requestIdRef = useRef(0);
+
   async function fetchGridTotal(gridProductCount: number) {
+    requestedCountRef.current = gridProductCount;
+
+    // L'API refuse diagnosticCount < 1 : sans diagnostic grille, il n'y a pas de
+    // prix de grille à afficher, seulement les produits à prix fixe.
+    if (gridProductCount === 0) {
+      setGridError(null);
+      setGridTotal(null, 0);
+      return;
+    }
+
+    const requestId = ++requestIdRef.current;
     setGridLoading(true);
-    setGridError(false);
+    setGridError(null);
+
+    // NaN (saisie illisible) serait sérialisé en `null` et rejeté en 422.
+    const parsedSurface = parseFloat(state.surfaceArea);
+    const gridCategory = gridCategoryFor(state.projectType);
+    const payload = {
+      postalCode: state.postalCode,
+      propertyType: normalizePropertyType(state.propertyType ?? ''),
+      diagnosticCount: gridProductCount,
+      ...(Number.isFinite(parsedSurface) ? { surfaceArea: parsedSurface } : {}),
+      ...(gridCategory ? { gridCategory } : {}),
+    };
+
     try {
-      const surfaceArea = state.surfaceArea.trim() ? parseFloat(state.surfaceArea) : undefined;
-      const propertyType = normalizePropertyType(state.propertyType ?? '');
+      const gridTotal = await calculateGridTotal(payload, staffOrgId);
 
-      const gridTotal = await calculateGridTotal({
-        postalCode: state.postalCode,
-        propertyType,
-        diagnosticCount: gridProductCount,
-        ...(surfaceArea !== undefined ? { surfaceArea } : {}),
-      }, staffOrgId);
-
-      setGridTotal(gridTotal);
-    } catch {
-      setGridError(true);
+      if (requestId !== requestIdRef.current) return;
+      setGridTotal(gridTotal, gridProductCount);
+    } catch (err) {
+      reportWizardError(err, 'step-7', 'calculate-grid-total', payload);
+      if (requestId !== requestIdRef.current) return;
+      setGridError(describeWizardError(err, 'Impossible de calculer le prix grille.'));
     } finally {
-      setGridLoading(false);
+      if (requestId === requestIdRef.current) setGridLoading(false);
     }
   }
 
-  // Le prix grille n'est pas persisté : si on arrive sur l'écran avec des
-  // diagnostics déjà sélectionnés (brouillon repris, obligatoires pré-cochés)
-  // sans toggle manuel, on le (re)calcule pour ne jamais envoyer 0.
+  // Le prix grille n'est pas persisté, et il peut aussi être périmé (calculé pour
+  // un autre nombre de diagnostics). On recalcule dès que la sélection grille ne
+  // correspond plus au dernier calcul demandé — sans ça un total erroné traverse
+  // l'écran prix, le récapitulatif et la soumission.
   useEffect(() => {
-    if (selectedGridCount > 0 && !hasValidGridTotal) {
+    if (requestedCountRef.current !== selectedGridCount) {
       fetchGridTotal(selectedGridCount);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -144,11 +175,7 @@ export default function Step7Screen() {
     const allSelected = toggleProduct(productId);
     setUpdatingProductId(productId);
 
-    const gridProductCount = allSuggestions.filter(
-      (s) => s.pricingSource === 'grid' && allSelected.includes(s.product.id),
-    ).length;
-
-    await fetchGridTotal(gridProductCount);
+    await fetchGridTotal(countGridDiagnostics(allSuggestions, allSelected));
     setUpdatingProductId(null);
   }
 
@@ -212,6 +239,16 @@ export default function Step7Screen() {
             {totals.selected.length} diagnostic{totals.selected.length > 1 ? 's' : ''} sélectionné
             {totals.selected.length > 1 ? 's' : ''}
           </ThemedText>
+          {totals.supplementsTtc > 0 ? (
+            <View style={styles.breakdownRow}>
+              <ThemedText type="muted" style={styles.breakdownLabel}>
+                Dont suppléments
+              </ThemedText>
+              <ThemedText type="muted" style={styles.breakdownLabel}>
+                +{priceFormatter.format(totals.supplementsTtc)}
+              </ThemedText>
+            </View>
+          ) : null}
           <View style={styles.totalRow}>
             <ThemedText style={styles.totalLabel}>Total TTC</ThemedText>
             {gridLoading ? (
@@ -223,12 +260,29 @@ export default function Step7Screen() {
             )}
           </View>
           {gridError ? (
-            <ThemedText style={[styles.gridErrorText, { color: colors.destructive }]}>
-              Impossible de calculer le prix grille. Touchez un diagnostic pour réessayer.
-            </ThemedText>
+            <View style={styles.gridErrorBlock}>
+              <ThemedText style={[styles.gridErrorText, { color: colors.destructive }]}>
+                {gridError}
+              </ThemedText>
+              <Pressable
+                onPress={() => fetchGridTotal(selectedGridCount)}
+                disabled={gridLoading}
+                accessibilityRole="button"
+                accessibilityLabel="Réessayer le calcul du prix"
+                style={({ pressed }) => [
+                  styles.retryButton,
+                  { borderColor: colors.foreground, opacity: pressed || gridLoading ? 0.5 : 1 },
+                ]}>
+                <ThemedText style={[styles.retryText, { color: colors.foreground }]}>
+                  Réessayer
+                </ThemedText>
+              </Pressable>
+            </View>
           ) : gridPriceMissing ? (
             <ThemedText style={[styles.gridErrorText, { color: colors.destructive }]}>
-              Calcul du prix grille en cours…
+              {gridLoading
+                ? 'Calcul du prix grille en cours…'
+                : 'Aucun prix de grille pour ce bien (zone, type de bien ou surface non couverts par la grille de votre organisation).'}
             </ThemedText>
           ) : null}
         </View>
@@ -320,6 +374,14 @@ const styles = StyleSheet.create({
   totalCount: {
     fontSize: 12,
   },
+  breakdownRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  breakdownLabel: {
+    fontSize: 12,
+  },
   totalRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -333,6 +395,14 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
   },
+  gridErrorBlock: { gap: 10 },
+  retryButton: {
+    paddingVertical: 8,
+    borderRadius: Radius.md,
+    borderWidth: 1.5,
+    alignItems: 'center',
+  },
+  retryText: { fontSize: 14, fontWeight: '500' },
   gridErrorText: {
     fontSize: 12,
     fontWeight: '500',

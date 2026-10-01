@@ -23,6 +23,9 @@ export type YearRange =
 
 export type GasState = 'oui' | 'non' | 'ne_sait_pas';
 
+/** Catégorie de grille tarifaire côté backend (`GRID_CATEGORIES`). */
+export type GridCategory = 'standard' | 'gestion_locative';
+
 export type OwnershipType = 'individuel' | 'copropriete' | string;
 
 export type BdnbBuilding = {
@@ -43,6 +46,21 @@ export type SuggestedProduct = {
     nameI18n: { fr: string; en?: string };
     descriptionI18n?: { fr?: string; en?: string };
     iconUrl?: string | null;
+    /**
+     * Supplément facturé en plus du prix de la ligne (surface, déplacement…).
+     * Renvoyé par l'API sur chaque produit ; il s'ajoute au total quelle que
+     * soit la tarification (grille ou fixe) et n'est jamais couvert par le
+     * forfait gestion locative.
+     */
+    priceSupplementHt?: number | null;
+    priceSupplementTtc?: number | null;
+    supplementLabel?: string | null;
+    /**
+     * Nature tarifaire du produit en base. C'est le SEUL critère fiable pour
+     * savoir si une prestation relève de la grille : c'est celui qu'utilise le
+     * serveur pour retarifer (`collectGridDiagnosticItems`). Voir `isGridDiagnostic`.
+     */
+    pricingType?: 'grid' | 'fixed';
   };
   result: 'obligatoire' | 'facultatif';
   priceHt: number;
@@ -86,6 +104,62 @@ export function normalizePropertyType(propertyType: string): string {
   return propertyType;
 }
 
+/**
+ * La gestion locative se tarife sur une grille dédiée (forfaitaire, sans zone ni
+ * tranche de surface). Le backend retombe sur la grille `standard` dès que la
+ * catégorie n'est pas transmise, et `projectType` ne suffit pas à la déduire
+ * puisqu'il est aplati en `location` — d'où ce champ explicite, à joindre à
+ * TOUS les appels tarifaires (calcul du total ET soumission).
+ */
+export function gridCategoryFor(projectType: ProjectType | null): GridCategory | undefined {
+  return projectType === 'gestion_locative' ? 'gestion_locative' : undefined;
+}
+
+/**
+ * Une prestation relève-t-elle de la grille tarifaire ?
+ *
+ * Se fier à `pricingSource` est un piège : le serveur le met à `'fixed'` quand
+ * la recherche en grille échoue (zone absente, tranche de surface non couverte),
+ * en renvoyant `product.priceHt/priceTtc` — or ceux-ci valent toujours `null`
+ * pour un produit grille, donc 0 €. Un diagnostic grille arrive alors ici
+ * déguisé en prestation à prix fixe gratuite : exclu du palier, ajouté à 0 €,
+ * et le blocage anti-devis-à-0 ne se déclenche pas.
+ *
+ * `product.pricingType` est la nature réelle du produit et c'est exactement le
+ * critère qu'applique le serveur pour retarifer (`collectGridDiagnosticItems`).
+ * S'aligner dessus garantit que client et serveur tarifent le même ensemble.
+ */
+export function isGridDiagnostic(suggestion: SuggestedProduct): boolean {
+  return (suggestion.product.pricingType ?? suggestion.pricingSource) === 'grid';
+}
+
+/**
+ * Total des suppléments TTC d'une sélection. Ils s'ajoutent au prix de grille ET
+ * aux prix fixes, y compris en gestion locative — même règle que le wizard web
+ * (`calculateSupplements`, sans garde `isGestionLocative`).
+ */
+export function sumSupplementsTtc(suggestions: SuggestedProduct[]): number {
+  return suggestions.reduce((sum, s) => sum + (s.product.priceSupplementTtc ?? 0), 0);
+}
+
+/**
+ * Nombre de diagnostics à envoyer à `calculate-grid-total`.
+ *
+ * La grille ne tarife QUE les diagnostics grille (cf. `isGridDiagnostic`) : inclure un
+ * produit obligatoire à prix fixe (ERP, prélèvement…) fait basculer le calcul
+ * sur le palier supérieur de la grille, et ce produit est en plus facturé à son
+ * prix propre dans `selectQuoteTotals` — donc double comptage. C'est exactement
+ * le `countGridProducts` du wizard web ; ne jamais compter autre chose ici.
+ */
+export function countGridDiagnostics(
+  suggestions: SuggestedProduct[],
+  selectedProductIds: string[],
+): number {
+  return suggestions.filter(
+    (s) => isGridDiagnostic(s) && selectedProductIds.includes(s.product.id),
+  ).length;
+}
+
 type BdnbSearchPayload = {
   address: string;
   postalCode: string;
@@ -109,8 +183,9 @@ type SuggestPayload = {
   postalCode: string;
   propertyType: string;
   transactionType: TransactionType;
-  constructionYear: number | null;
-  surfaceArea: number | null;
+  // Omis plutôt que `null` : le validateur backend (`.optional()`) refuse `null`.
+  constructionYear?: number;
+  surfaceArea?: number;
   hasGas: boolean;
   hasElectricity?: boolean;
 };
@@ -133,7 +208,7 @@ type GridTotalPayload = {
   propertyType: string;
   diagnosticCount: number;
   surfaceArea?: number;
-  gridCategory?: string;
+  gridCategory?: GridCategory;
 };
 
 type GridTotalResponse = {
@@ -155,6 +230,12 @@ export async function calculateGridTotal(payload: GridTotalPayload, orgId?: stri
 
 export type WizardSubmitPayload = {
   projectType: string;
+  /**
+   * Transmis uniquement en gestion locative. Le serveur retarife les diagnostics
+   * depuis la grille avant de créer le dossier : sans cette catégorie il utilise
+   * la grille standard et écrase les prix calculés ici.
+   */
+  gridCategory?: GridCategory;
   postalCode: string;
   address: string | null;
   city: string | null;
@@ -196,6 +277,7 @@ export type WizardSubmitPayload = {
     unitPriceTtc: number;
     supplementHt?: number;
     supplementTtc?: number;
+    supplementLabel?: string | null;
   }[];
   clientComments: string | null;
   sendQuoteToClient: boolean;
@@ -307,7 +389,7 @@ export function buildSubmitPayload(
     .map((id) => allSuggestions.find((s) => s.product.id === id))
     .filter((s): s is SuggestedProduct => s !== undefined);
 
-  const gridItemCount = selectedSuggestions.filter((s) => s.pricingSource === 'grid').length;
+  const gridItemCount = selectedSuggestions.filter(isGridDiagnostic).length;
   const hasGridTotal = !!state.gridTotal && (state.gridTotal.priceTtc ?? 0) > 0;
   const gridPerItemHt =
     hasGridTotal && gridItemCount > 0 ? (state.gridTotal!.priceHt ?? 0) / gridItemCount : 0;
@@ -315,15 +397,20 @@ export function buildSubmitPayload(
     hasGridTotal && gridItemCount > 0 ? (state.gridTotal!.priceTtc ?? 0) / gridItemCount : 0;
 
   const items = selectedSuggestions.map((suggestion) => {
-    const isGrid = suggestion.pricingSource === 'grid' && hasGridTotal;
+    const isGrid = isGridDiagnostic(suggestion) && hasGridTotal;
     return {
       productId: suggestion.product.id,
       nameI18n: suggestion.product.nameI18n,
       quantity: 1,
+      // Les diagnostics grille se partagent le forfait ; les prestations à prix
+      // fixe gardent leur prix.
       unitPriceHt: isGrid ? gridPerItemHt : suggestion.priceHt,
       unitPriceTtc: isGrid ? gridPerItemTtc : suggestion.priceTtc,
-      supplementHt: 0,
-      supplementTtc: 0,
+      // Le supplément se facture en plus du prix de ligne, y compris quand la
+      // ligne est couverte par le forfait gestion locative.
+      supplementHt: suggestion.product.priceSupplementHt ?? 0,
+      supplementTtc: suggestion.product.priceSupplementTtc ?? 0,
+      supplementLabel: suggestion.product.supplementLabel ?? null,
     };
   });
 
@@ -349,8 +436,11 @@ export function buildSubmitPayload(
   }
   const transactionType: TransactionType = PROJECT_TYPE_TO_TRANSACTION[state.projectType];
 
+  const gridCategory = gridCategoryFor(state.projectType);
+
   return {
     projectType: transactionType,
+    ...(gridCategory ? { gridCategory } : {}),
     postalCode: state.postalCode,
     address: nullIfEmpty(state.address),
     city: nullIfEmpty(state.propertyCity),

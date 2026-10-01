@@ -10,9 +10,13 @@ import {
   PROJECT_TYPE_TO_TRANSACTION,
   YEAR_RANGE_MAP,
   calculateGridTotal,
+  countGridDiagnostics,
+  gridCategoryFor,
   normalizePropertyType,
   suggestDiagnostics,
+  type SuggestionsResult,
 } from '@/services/quote-wizard';
+import { describeWizardError, reportWizardError } from '@/services/quote-wizard-errors';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -39,47 +43,78 @@ export default function Step6Screen() {
     setIsLoading(true);
     setError(null);
 
+    const transactionType = PROJECT_TYPE_TO_TRANSACTION[state.projectType!];
+    const propertyType = normalizePropertyType(state.propertyType ?? '');
+
+    const parsedYear = state.exactYear.trim()
+      ? parseInt(state.exactYear, 10)
+      : state.yearRange
+        ? YEAR_RANGE_MAP[state.yearRange]
+        : NaN;
+    // Une saisie illisible (ex. « , ») donne NaN, sérialisé en `null` par JSON
+    // et rejeté en 422 : on omet le champ plutôt que de bloquer le partenaire.
+    const constructionYear = Number.isFinite(parsedYear) ? parsedYear : undefined;
+    const parsedSurface = parseFloat(state.surfaceArea);
+    const surfaceArea = Number.isFinite(parsedSurface) ? parsedSurface : undefined;
+
+    const suggestPayload = {
+      postalCode: state.postalCode,
+      propertyType,
+      transactionType,
+      ...(constructionYear !== undefined ? { constructionYear } : {}),
+      ...(surfaceArea !== undefined ? { surfaceArea } : {}),
+      hasGas: state.hasGas === 'oui',
+      hasElectricity: true,
+    };
+
+    let suggestions: SuggestionsResult;
     try {
-      const transactionType = PROJECT_TYPE_TO_TRANSACTION[state.projectType!];
-      const rawPropertyType = state.propertyType ?? '';
-      const propertyType = normalizePropertyType(rawPropertyType);
-
-      const constructionYear = state.exactYear.trim()
-        ? parseInt(state.exactYear, 10)
-        : state.yearRange
-          ? YEAR_RANGE_MAP[state.yearRange]
-          : null;
-
-      const surfaceArea = state.surfaceArea.trim() ? parseFloat(state.surfaceArea) : null;
-      const hasGas = state.hasGas === 'oui';
-
-      const suggestions = await suggestDiagnostics({
-        postalCode: state.postalCode,
-        propertyType,
-        transactionType,
-        constructionYear,
-        surfaceArea,
-        hasGas,
-        hasElectricity: true,
-      }, staffOrgId);
-
-      setSuggestions(suggestions);
-
-      const gridTotal = await calculateGridTotal({
-        postalCode: state.postalCode,
-        propertyType,
-        diagnosticCount: suggestions.obligatoire.length,
-        ...(surfaceArea !== null ? { surfaceArea } : {}),
-      }, staffOrgId);
-
-      setGridTotal(gridTotal);
-
-      router.push('/quote-wizard/step-7');
-    } catch {
-      setError('Impossible de récupérer les diagnostics. Vérifiez votre connexion et réessayez.');
-    } finally {
+      suggestions = await suggestDiagnostics(suggestPayload, staffOrgId);
+    } catch (err) {
+      reportWizardError(err, 'step-6', 'suggest', suggestPayload);
+      setError(
+        describeWizardError(err, 'Impossible de récupérer les diagnostics. Réessayez dans quelques instants.'),
+      );
       setIsLoading(false);
+      return;
     }
+
+    const selectedIds = setSuggestions(suggestions);
+
+    // Compter TOUTES les suggestions (pas seulement les obligatoires) filtrées
+    // sur la sélection réelle : à la reprise d'un brouillon, des facultatifs
+    // peuvent être re-sélectionnés par setSuggestions.
+    const gridCount = countGridDiagnostics(
+      [...suggestions.obligatoire, ...suggestions.facultatif],
+      selectedIds,
+    );
+
+    const gridCategory = gridCategoryFor(state.projectType);
+
+    if (gridCount > 0) {
+      const gridPayload = {
+        postalCode: state.postalCode,
+        propertyType,
+        diagnosticCount: gridCount,
+        ...(surfaceArea !== undefined ? { surfaceArea } : {}),
+        ...(gridCategory ? { gridCategory } : {}),
+      };
+      try {
+        setGridTotal(await calculateGridTotal(gridPayload, staffOrgId), gridCount);
+      } catch (err) {
+        // Non bloquant : l'étape 7 recalcule le prix grille dès qu'il manque,
+        // affiche l'erreur avec un bouton « Réessayer » et empêche l'envoi sans prix.
+        reportWizardError(err, 'step-6', 'calculate-grid-total', gridPayload);
+        setGridTotal(null, 0);
+      }
+    } else {
+      // Aucun diagnostic grille : pas d'appel (l'API exige diagnosticCount >= 1),
+      // le total se limite aux produits à prix fixe.
+      setGridTotal(null, 0);
+    }
+
+    setIsLoading(false);
+    router.push('/quote-wizard/step-7');
   }
 
   return (

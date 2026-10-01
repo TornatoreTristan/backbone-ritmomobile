@@ -149,6 +149,74 @@ describe('selectQuoteTotals', () => {
     expect(totals.totalTtc).toBe(250);
   });
 
+  // Les prestations à prix fixe comptent toujours à leur prix, gestion locative
+  // comprise : le type de projet ne change que la grille utilisée.
+  it('counts fixed prices whatever the project type', () => {
+    const a = makeSuggestion('a', 'grid', 80);
+    const b = makeSuggestion('b', 'fixed', 100, 'facultatif');
+    const overrides = {
+      suggestionsObligatoire: [a],
+      suggestionsFacultatif: [b],
+      selectedProductIds: ['a', 'b'],
+      gridTotal: { priceTtc: 150 },
+    };
+
+    for (const projectType of ['location', 'gestion_locative'] as const) {
+      const totals = selectQuoteTotals(makeState({ ...overrides, projectType }));
+      expect(totals.fixedTtc).toBe(100);
+      expect(totals.totalTtc).toBe(250);
+    }
+  });
+
+  // Les suppléments (surface, déplacement…) étaient purement ignorés par le
+  // mobile : total affiché et dossier créé sous-évalués sur les organisations
+  // qui en configurent.
+  it('adds product supplements on top of grid and fixed prices', () => {
+    const a: SuggestedProduct = {
+      ...makeSuggestion('a', 'grid', 80),
+      product: { id: 'a', nameI18n: { fr: 'a' }, priceSupplementTtc: 30 },
+    };
+    const b: SuggestedProduct = {
+      ...makeSuggestion('b', 'fixed', 100, 'facultatif'),
+      product: { id: 'b', nameI18n: { fr: 'b' }, priceSupplementTtc: 12 },
+    };
+    const totals = selectQuoteTotals(
+      makeState({
+        projectType: 'vente',
+        suggestionsObligatoire: [a],
+        suggestionsFacultatif: [b],
+        selectedProductIds: ['a', 'b'],
+        gridTotal: { priceTtc: 150 },
+      }),
+    );
+    expect(totals.supplementsTtc).toBe(42);
+    expect(totals.totalTtc).toBe(150 + 100 + 42);
+  });
+
+  // Un diagnostic grille rétrogradé en 'fixed' à 0 € par un échec de recherche
+  // grille ne doit pas être compté comme une prestation à prix fixe : sinon le
+  // total tombe à 0 € et le blocage anti-devis-à-0 ne se déclenche pas.
+  it('treats a downgraded grid product as grid, not as a 0 € fixed line', () => {
+    const downgraded: SuggestedProduct = {
+      product: { id: 'dpe', nameI18n: { fr: 'DPE' }, pricingType: 'grid' },
+      result: 'obligatoire',
+      priceHt: 0,
+      priceTtc: 0,
+      pricingSource: 'fixed',
+    };
+    const totals = selectQuoteTotals(
+      makeState({
+        projectType: 'vente',
+        suggestionsObligatoire: [downgraded],
+        selectedProductIds: ['dpe'],
+        gridTotal: null,
+      }),
+    );
+    expect(totals.gridSelected).toHaveLength(1);
+    expect(totals.fixedSelected).toHaveLength(0);
+    expect(totals.fixedTtc).toBe(0);
+  });
+
   it('ignores unselected suggestions', () => {
     const a = makeSuggestion('a', 'fixed', 100);
     const b = makeSuggestion('b', 'fixed', 50);

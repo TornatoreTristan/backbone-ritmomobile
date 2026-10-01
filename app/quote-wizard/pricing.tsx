@@ -47,7 +47,9 @@ export default function PricingScreen() {
             styles.gridPriceBox,
             { backgroundColor: colors.surfaceSubtle, borderColor: colors.border },
           ]}>
-          <ThemedText style={styles.gridPriceLabel}>Total grille calculé</ThemedText>
+          {/* Pas seulement la grille : inclut aussi les produits à prix fixe et
+              les suppléments. */}
+          <ThemedText style={styles.gridPriceLabel}>Total calculé</ThemedText>
           <ThemedText style={[styles.gridPriceValue, { color: colors.foreground }]}>
             {priceFormatter.format(totals.totalTtc)}
           </ThemedText>

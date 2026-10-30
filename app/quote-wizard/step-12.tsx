@@ -1,4 +1,5 @@
 import { ThemedText } from '@/components/themed-text';
+import { LoyaltyDiscountRows } from '@/components/wizard/loyalty-discount-rows';
 import { WizardField } from '@/components/wizard/wizard-field';
 import { WizardFooter } from '@/components/wizard/wizard-footer';
 import { WizardScreen } from '@/components/wizard/wizard-screen';
@@ -306,6 +307,7 @@ export default function Step12Screen() {
             </View>
           )}
           <View style={[styles.divider, { backgroundColor: colors.border }]} />
+          <LoyaltyDiscountRows totals={totals} />
           <View style={styles.totalTtcRow}>
             <ThemedText style={[styles.rowLabel, styles.totalTtcLabel]}>Total TTC</ThemedText>
             <ThemedText style={[styles.rowValue, styles.totalTtcValue, { color: colors.foreground }]}>

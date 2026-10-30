@@ -1,4 +1,5 @@
 import { ThemedText } from '@/components/themed-text';
+import { LoyaltyDiscountRows } from '@/components/wizard/loyalty-discount-rows';
 import { WizardFooter } from '@/components/wizard/wizard-footer';
 import { WizardScreen } from '@/components/wizard/wizard-screen';
 import { Radius } from '@/constants/theme';
@@ -249,6 +250,7 @@ export default function Step7Screen() {
               </ThemedText>
             </View>
           ) : null}
+          {gridLoading ? null : <LoyaltyDiscountRows totals={totals} />}
           <View style={styles.totalRow}>
             <ThemedText style={styles.totalLabel}>Total TTC</ThemedText>
             {gridLoading ? (

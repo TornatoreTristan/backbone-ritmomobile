@@ -53,9 +53,14 @@ export default function PricingScreen() {
           <ThemedText style={[styles.gridPriceValue, { color: colors.foreground }]}>
             {priceFormatter.format(totals.totalTtc)}
           </ThemedText>
-          {totals.totalTtc === 0 ? (
+          {/* Sur le sous-total : une remise de 100 % donne aussi un total nul. */}
+          {totals.subtotalTtc === 0 ? (
             <ThemedText style={styles.gridPriceHint}>
               Aucun produit sélectionné ou grille non calculée
+            </ThemedText>
+          ) : totals.loyaltyDiscount ? (
+            <ThemedText style={styles.gridPriceHint}>
+              Remise partenaire incluse (-{priceFormatter.format(totals.discountTtc)})
             </ThemedText>
           ) : null}
         </View>

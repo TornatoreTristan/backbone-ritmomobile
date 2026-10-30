@@ -12,6 +12,7 @@ import type {
   BdnbSearchResult,
   GasState,
   GridTotalResult,
+  LoyaltyDiscount,
   OwnershipType,
   ProjectType,
   PropertyType,
@@ -19,7 +20,12 @@ import type {
   SuggestionsResult,
   YearRange,
 } from '@/services/quote-wizard';
-import { isGridDiagnostic, sumSupplementsTtc } from '@/services/quote-wizard';
+import {
+  computeLoyaltyDiscountTtc,
+  isGridDiagnostic,
+  roundCents,
+  sumSupplementsTtc,
+} from '@/services/quote-wizard';
 import {
   clearWizardState,
   loadWizardState,
@@ -42,6 +48,11 @@ export type QuoteTotals = {
   gridTtc: number;
   fixedTtc: number;
   supplementsTtc: number;
+  /** Total avant remise partenaire. */
+  subtotalTtc: number;
+  loyaltyDiscount: LoyaltyDiscount | null;
+  discountTtc: number;
+  /** Total après remise partenaire — égal à `subtotalTtc` sans remise. */
   totalTtc: number;
 };
 
@@ -71,6 +82,20 @@ export function selectQuoteTotals(state: WizardState): QuoteTotals {
   // ligne, grille ou fixe, et restent dus en gestion locative.
   const supplementsTtc = sumSupplementsTtc(selected);
 
+  const subtotalTtc = gridTtc + fixedTtc + supplementsTtc;
+  const loyaltyDiscount = state.gridTotal?.loyaltyDiscount ?? null;
+
+  let totalTtc = subtotalTtc;
+  if (loyaltyDiscount) {
+    const discountedGridTtc = state.gridTotal?.discountedPriceTtc;
+    const isGridOnly =
+      fixedTtc === 0 && supplementsTtc === 0 && gridTtc === state.gridTotal?.priceTtc;
+    totalTtc =
+      isGridOnly && typeof discountedGridTtc === 'number'
+        ? discountedGridTtc
+        : Math.max(0, roundCents(subtotalTtc - computeLoyaltyDiscountTtc(subtotalTtc, loyaltyDiscount)));
+  }
+
   return {
     selected,
     gridSelected,
@@ -78,9 +103,13 @@ export function selectQuoteTotals(state: WizardState): QuoteTotals {
     gridTtc,
     fixedTtc,
     supplementsTtc,
-    totalTtc: gridTtc + fixedTtc + supplementsTtc,
+    subtotalTtc,
+    loyaltyDiscount,
+    discountTtc: roundCents(subtotalTtc - totalTtc),
+    totalTtc,
   };
 }
+
 
 export type { ProjectType, PropertyType, YearRange, GasState, OwnershipType };
 

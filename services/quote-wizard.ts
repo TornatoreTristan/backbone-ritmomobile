@@ -73,12 +73,24 @@ export type SuggestionsResult = {
   facultatif: SuggestedProduct[];
 };
 
+/** Programme de fidélité « remise » du partenaire, tel que sérialisé par le backend. */
+export type LoyaltyDiscount = {
+  name: string;
+  discountType: 'percentage' | 'fixed';
+  discountValue: number;
+};
+
 export type GridTotalResult = {
   priceHt?: number;
   priceTtc?: number;
   diagnosticCount?: number;
   gridName?: string | null;
   zoneName?: string | null;
+  // Absents sur un backend antérieur à la remise partenaire : l'affichage doit
+  // alors rester identique.
+  loyaltyDiscount?: LoyaltyDiscount | null;
+  /** `priceTtc` après remise partenaire — ne vaut que pour le prix grille seul. */
+  discountedPriceTtc?: number;
 };
 
 export const PROJECT_TYPE_TO_TRANSACTION: Record<ProjectType, TransactionType> = {
@@ -140,6 +152,23 @@ export function isGridDiagnostic(suggestion: SuggestedProduct): boolean {
  */
 export function sumSupplementsTtc(suggestions: SuggestedProduct[]): number {
   return suggestions.reduce((sum, s) => sum + (s.product.priceSupplementTtc ?? 0), 0);
+}
+
+export function roundCents(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/**
+ * Montant de la remise partenaire sur un total TTC. Même formule que
+ * `computeLoyaltyPricing` côté serveur, qui l'applique au total complet à la
+ * soumission : le total affiché doit donc la reproduire, pas seulement
+ * reprendre `discountedPriceTtc` (calculé sur le prix grille seul).
+ */
+export function computeLoyaltyDiscountTtc(totalTtc: number, discount: LoyaltyDiscount): number {
+  if (discount.discountType === 'percentage') {
+    return roundCents((totalTtc * Math.min(discount.discountValue, 100)) / 100);
+  }
+  return Math.min(discount.discountValue, totalTtc);
 }
 
 /**

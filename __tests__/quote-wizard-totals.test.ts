@@ -230,3 +230,111 @@ describe('selectQuoteTotals', () => {
     expect(totals.selected).toHaveLength(1);
   });
 });
+
+describe('selectQuoteTotals — remise partenaire', () => {
+  const grid = (priceTtc: number, extra: Record<string, unknown> = {}) => ({
+    priceTtc,
+    requestedCount: 1,
+    ...extra,
+  });
+
+  it('leaves totals untouched without loyaltyDiscount (older backend)', () => {
+    const dpe = makeSuggestion('dpe', 'grid', 0);
+    const totals = selectQuoteTotals(
+      makeState({
+        suggestionsObligatoire: [dpe],
+        selectedProductIds: ['dpe'],
+        gridTotal: grid(200),
+      }),
+    );
+    expect(totals.loyaltyDiscount).toBeNull();
+    expect(totals.subtotalTtc).toBe(200);
+    expect(totals.discountTtc).toBe(0);
+    expect(totals.totalTtc).toBe(200);
+  });
+
+  it('uses discountedPriceTtc when the total is the grid price alone', () => {
+    const dpe = makeSuggestion('dpe', 'grid', 0);
+    const totals = selectQuoteTotals(
+      makeState({
+        suggestionsObligatoire: [dpe],
+        selectedProductIds: ['dpe'],
+        gridTotal: grid(200, {
+          loyaltyDiscount: { name: 'Fid', discountType: 'percentage', discountValue: 10 },
+          discountedPriceTtc: 180,
+        }),
+      }),
+    );
+    expect(totals.subtotalTtc).toBe(200);
+    expect(totals.totalTtc).toBe(180);
+    expect(totals.discountTtc).toBe(20);
+  });
+
+  it('applies a percentage discount to the whole total when fixed products are selected', () => {
+    const dpe = makeSuggestion('dpe', 'grid', 0);
+    const erp = makeSuggestion('erp', 'fixed', 33.33);
+    const totals = selectQuoteTotals(
+      makeState({
+        suggestionsObligatoire: [dpe, erp],
+        selectedProductIds: ['dpe', 'erp'],
+        gridTotal: grid(200, {
+          loyaltyDiscount: { name: 'Fid', discountType: 'percentage', discountValue: 15 },
+          discountedPriceTtc: 170,
+        }),
+      }),
+    );
+    // 233,33 × 15 % = 34,9995 → 35,00
+    expect(totals.subtotalTtc).toBeCloseTo(233.33, 2);
+    expect(totals.discountTtc).toBeCloseTo(35, 2);
+    expect(totals.totalTtc).toBeCloseTo(198.33, 2);
+  });
+
+  it('applies the discount on top of supplements', () => {
+    const dpe: SuggestedProduct = {
+      ...makeSuggestion('dpe', 'grid', 0),
+      product: { id: 'dpe', nameI18n: { fr: 'dpe' }, priceSupplementTtc: 50 },
+    };
+    const totals = selectQuoteTotals(
+      makeState({
+        suggestionsObligatoire: [dpe],
+        selectedProductIds: ['dpe'],
+        gridTotal: grid(200, {
+          loyaltyDiscount: { name: 'Fid', discountType: 'fixed', discountValue: 30 },
+          discountedPriceTtc: 170,
+        }),
+      }),
+    );
+    expect(totals.subtotalTtc).toBe(250);
+    expect(totals.totalTtc).toBe(220);
+  });
+
+  it('caps a percentage discount at 100 %', () => {
+    const erp = makeSuggestion('erp', 'fixed', 80);
+    const totals = selectQuoteTotals(
+      makeState({
+        suggestionsObligatoire: [erp],
+        selectedProductIds: ['erp'],
+        gridTotal: grid(0, {
+          loyaltyDiscount: { name: 'Fid', discountType: 'percentage', discountValue: 150 },
+        }),
+      }),
+    );
+    expect(totals.discountTtc).toBe(80);
+    expect(totals.totalTtc).toBe(0);
+  });
+
+  it('never lets a fixed discount push the total below zero', () => {
+    const erp = makeSuggestion('erp', 'fixed', 40);
+    const totals = selectQuoteTotals(
+      makeState({
+        suggestionsObligatoire: [erp],
+        selectedProductIds: ['erp'],
+        gridTotal: grid(0, {
+          loyaltyDiscount: { name: 'Fid', discountType: 'fixed', discountValue: 100 },
+        }),
+      }),
+    );
+    expect(totals.discountTtc).toBe(40);
+    expect(totals.totalTtc).toBe(0);
+  });
+});

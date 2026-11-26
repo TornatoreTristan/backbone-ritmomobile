@@ -116,6 +116,22 @@ export type FolderDetail = Folder & {
   discountAmountTtc: number | null;
   discountPercent: number | null;
   partnerNotes: string | null;
+  // Champs bruts éditables (adresse du bien décomposée, accès, notes).
+  // Optionnels : absents des backends antérieurs à PATCH /api/v1/folders/:id.
+  address?: string | null;
+  postalCode?: string | null;
+  city?: string | null;
+  residenceName?: string | null;
+  floor?: string | null;
+  door?: string | null;
+  lotNumber?: string | null;
+  onSiteContactName?: string | null;
+  onSiteContactPhone?: string | null;
+  accessConditions?: string | null;
+  notes?: string | null;
+  clientComments?: string | null;
+  /** true si l'utilisateur (staff de l'org) peut modifier le dossier. */
+  canEdit?: boolean;
   quotes: FolderQuoteSummary[];
   invoices: FolderInvoiceSummary[];
   interventions: FolderInterventionSummary[];
@@ -155,6 +171,43 @@ export async function getMyFolders(): Promise<Folder[]> {
 
 export async function getFolderById(id: string): Promise<FolderDetail> {
   const response = await apiRequest<FolderDetailResponse>(`/api/v1/folders/${id}`);
+  return response.data;
+}
+
+/** Statuts qu'un membre staff peut appliquer depuis le mobile (pas de retour en brouillon). */
+export type EditableFolderStatus = Exclude<FolderStatus, 'draft'>;
+
+export type FolderUpdatePayload = {
+  clientName?: string;
+  clientEmail?: string | null;
+  clientPhone?: string | null;
+  clientAddress?: string | null;
+  clientCity?: string | null;
+  clientPostalCode?: string | null;
+  address?: string | null;
+  postalCode?: string;
+  city?: string | null;
+  residenceName?: string | null;
+  floor?: string | null;
+  door?: string | null;
+  lotNumber?: string | null;
+  onSiteContactName?: string | null;
+  onSiteContactPhone?: string | null;
+  accessConditions?: string | null;
+  notes?: string | null;
+  clientComments?: string | null;
+  status?: EditableFolderStatus;
+};
+
+/** PATCH partiel : n'envoyer que les champs modifiés. Renvoie le dossier à jour. */
+export async function updateFolder(
+  id: string,
+  payload: FolderUpdatePayload,
+): Promise<FolderDetail> {
+  const response = await apiRequest<FolderDetailResponse>(`/api/v1/folders/${id}`, {
+    method: 'PATCH',
+    body: payload,
+  });
   return response.data;
 }
 

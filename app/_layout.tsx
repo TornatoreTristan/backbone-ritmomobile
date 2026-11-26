@@ -65,6 +65,10 @@ function RootLayout() {
                   options={{ presentation: 'modal', title: 'Rechercher' }}
                 />
                 <Stack.Screen
+                  name="folder-edit/[id]"
+                  options={{ presentation: 'modal', title: 'Modifier le dossier' }}
+                />
+                <Stack.Screen
                   name="quote-wizard"
                   options={{ presentation: 'modal', headerShown: false }}
                 />

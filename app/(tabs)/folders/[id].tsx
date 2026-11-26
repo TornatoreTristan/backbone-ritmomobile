@@ -1,3 +1,4 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Badge, type BadgeTone } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -33,8 +34,8 @@ import {
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as WebBrowser from 'expo-web-browser';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -390,6 +391,23 @@ export default function FolderDetailScreen() {
     load();
   }, [id]);
 
+  // Au retour sur l'écran (ex: après l'écran de modification), on rafraîchit
+  // silencieusement le dossier sans réafficher le chargement plein écran.
+  const hasFocusedOnce = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasFocusedOnce.current) {
+        hasFocusedOnce.current = true;
+        return;
+      }
+      getFolderById(id)
+        .then((folder) => setData((prev) => (prev ? { ...prev, folder } : prev)))
+        .catch(() => {
+          // échec silencieux — la version affichée reste valable
+        });
+    }, [id]),
+  );
+
   const reloadFiles = useCallback(async () => {
     try {
       const files = await getFolderFiles(id);
@@ -491,6 +509,9 @@ export default function FolderDetailScreen() {
   }
 
   const { folder, files, reports } = data;
+  // `canEdit` vient du backend (staff de l'org du dossier). Absent = backend antérieur
+  // sans PATCH /api/v1/folders/:id → pas de bouton.
+  const canEdit = folder.canEdit === true;
   const priceHt = formatPrice(folder.finalPriceHt);
   const priceTtc = formatPrice(folder.finalPriceTtc);
   const discountTtc = folder.discountAmountTtc ?? 0;
@@ -500,7 +521,14 @@ export default function FolderDetailScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top']}>
-        <BackBar onBack={() => router.back()} />
+        <BackBar
+          onBack={() => router.back()}
+          onEdit={
+            canEdit
+              ? () => router.push({ pathname: '/folder-edit/[id]', params: { id: folder.id } })
+              : undefined
+          }
+        />
         <ScrollView
           contentContainerStyle={[
             styles.scrollContent,
@@ -837,10 +865,10 @@ function AddFileButton({ onPress, isUploading }: { onPress: () => void; isUpload
   );
 }
 
-function BackBar({ onBack }: { onBack: () => void }) {
+function BackBar({ onBack, onEdit }: { onBack: () => void; onEdit?: () => void }) {
   const colors = useColors();
   return (
-    <View style={styles.backBar}>
+    <View style={[styles.backBar, styles.backBarRow]}>
       <Pressable
         onPress={onBack}
         hitSlop={12}
@@ -853,6 +881,21 @@ function BackBar({ onBack }: { onBack: () => void }) {
         ]}>
         <ThemedText style={[styles.backChevron, { color: colors.foreground }]}>‹</ThemedText>
       </Pressable>
+      {onEdit ? (
+        <Pressable
+          onPress={onEdit}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Modifier le dossier"
+          style={({ pressed }) => [
+            styles.editButton,
+            { backgroundColor: colors.muted, borderColor: colors.border },
+            pressed && { opacity: 0.7 },
+          ]}>
+          <Ionicons name="create-outline" size={16} color={colors.foreground} />
+          <ThemedText style={[styles.editLabel, { color: colors.foreground }]}>Modifier</ThemedText>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -1150,6 +1193,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 4,
+  },
+  backBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  editButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 36,
+    paddingHorizontal: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+  },
+  editLabel: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   backButton: {
     width: 36,

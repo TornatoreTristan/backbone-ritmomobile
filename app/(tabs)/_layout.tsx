@@ -5,6 +5,7 @@ import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useOrganization } from '@/contexts/organization-context';
+import { useMobotStatus } from '@/hooks/use-mobot-status';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function TabLayout() {
@@ -12,6 +13,8 @@ export default function TabLayout() {
   const palette = Colors[colorScheme];
   const { isTechnician, isStaff } = useOrganization();
   const isPartnerLike = !isTechnician && !isStaff;
+  const mobotStatus = useMobotStatus();
+  const canUseMobot = !isPartnerLike && Boolean(mobotStatus);
 
   return (
     <Tabs
@@ -80,6 +83,14 @@ export default function TabLayout() {
           title: 'Conseiller',
           tabBarIcon: ({ color }) => <IconSymbol size={26} name="headphones" color={color} />,
           href: isPartnerLike ? '/advisor' : null,
+        }}
+      />
+      <Tabs.Screen
+        name="assistant"
+        options={{
+          title: 'Mobot',
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="sparkles" color={color} />,
+          href: canUseMobot ? '/assistant' : null,
         }}
       />
       <Tabs.Screen

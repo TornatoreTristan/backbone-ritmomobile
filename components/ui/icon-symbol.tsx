@@ -21,6 +21,16 @@ const MAPPING = {
   magnifyingglass: 'search',
   'location.fill': 'navigation',
   'phone.fill': 'phone',
+  sparkles: 'auto-awesome',
+  'arrow.up': 'arrow-upward',
+  'stop.fill': 'stop',
+  trash: 'delete-outline',
+  'square.and.pencil': 'edit-square',
+  'clock.arrow.circlepath': 'history',
+  'hand.thumbsup': 'thumb-up-off-alt',
+  'hand.thumbsup.fill': 'thumb-up',
+  'hand.thumbsdown': 'thumb-down-off-alt',
+  'hand.thumbsdown.fill': 'thumb-down',
 } as IconMapping;
 
 /**

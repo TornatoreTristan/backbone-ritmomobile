@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card';
 import { RadioCard } from '@/components/wizard/radio-card';
 import { WizardField } from '@/components/wizard/wizard-field';
 import { centeredContent } from '@/constants/layout';
+import { FOLDER_STATUS_LABELS } from '@/constants/status-maps';
 import { useColors } from '@/hooks/use-theme-color';
 import { ApiError } from '@/services/api';
 import {
@@ -17,7 +18,7 @@ import {
 } from '@/services/folders';
 import { usePreventRemove } from '@react-navigation/native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 
@@ -59,13 +60,6 @@ const STATUS_OPTIONS: { value: EditableFolderStatus; label: string; hint: string
   { value: 'deal', label: 'Conclu', hint: 'Commande confirmée' },
   { value: 'archived', label: 'Archivé', hint: 'Dossier clos ou abandonné' },
 ];
-
-const STATUS_LABELS: Record<FolderStatus, string> = {
-  draft: 'Brouillon',
-  lead: 'Prospect',
-  deal: 'Conclu',
-  archived: 'Archivé',
-};
 
 function toFormValues(folder: FolderDetail): FormValues {
   const values = { status: folder.status } as FormValues;
@@ -183,7 +177,14 @@ export default function FolderEditScreen() {
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
   }
 
+  // Verrou synchrone : `isSaving` n'est pas encore à jour entre deux appuis
+  // rapprochés, et deux alertes de confirmation peuvent être ouvertes à la fois.
+  // Un second PATCH rejouerait les automatismes de changement de statut.
+  const isSubmittingRef = useRef(false);
+
   async function submit() {
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setIsSaving(true);
     try {
       await updateFolder(id, payload);
@@ -191,6 +192,9 @@ export default function FolderEditScreen() {
       // usePreventRemove désactivé par ce nouveau rendu.
       setIsSaved(true);
     } catch (err) {
+      // Le verrou n'est relâché qu'en cas d'échec : après un succès l'écran se
+      // ferme, et une seconde alerte encore ouverte ne doit pas renvoyer le PATCH.
+      isSubmittingRef.current = false;
       const serverErrors = extractServerErrors(err);
       if (serverErrors) {
         setErrors(serverErrors);
@@ -218,7 +222,7 @@ export default function FolderEditScreen() {
     if (payload.status) {
       Alert.alert(
         'Changer le statut ?',
-        `Le dossier passera de « ${STATUS_LABELS[initial.status]} » à « ${STATUS_LABELS[payload.status]} ». Les actions automatiques associées seront déclenchées.`,
+        `Le dossier passera de « ${FOLDER_STATUS_LABELS[initial.status]} » à « ${FOLDER_STATUS_LABELS[payload.status]} ». Les actions automatiques associées seront déclenchées.`,
         [
           { text: 'Annuler', style: 'cancel' },
           { text: 'Confirmer', onPress: submit },

@@ -17,8 +17,9 @@ import {
   type SuggestionsResult,
 } from '@/services/quote-wizard';
 import { describeWizardError, reportWizardError } from '@/services/quote-wizard-errors';
+import { parseDecimal, parseInteger } from '@/services/quote-wizard-numbers';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 function generateId(): string {
@@ -36,7 +37,29 @@ export default function Step6Screen() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Requêtes annulées à la sortie de l'écran : si le wizard est abandonné
+  // pendant le chargement, il ne faut ni écrire dans son état, ni naviguer vers
+  // l'étape 7 d'un wizard réinitialisé.
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   async function handleNext() {
+    // Verrou synchrone : « Suivant » et « Réessayer » ne lancent qu'un appel.
+    if (abortRef.current && !abortRef.current.signal.aborted) return;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      await loadSuggestions(controller.signal);
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
+    }
+  }
+
+  async function loadSuggestions(signal: AbortSignal) {
     const emptyDeps = state.dependances.filter((d) => d.nom.trim() === '');
     emptyDeps.forEach((d) => removeDependance(d.id));
 
@@ -46,16 +69,12 @@ export default function Step6Screen() {
     const transactionType = PROJECT_TYPE_TO_TRANSACTION[state.projectType!];
     const propertyType = normalizePropertyType(state.propertyType ?? '');
 
-    const parsedYear = state.exactYear.trim()
-      ? parseInt(state.exactYear, 10)
-      : state.yearRange
-        ? YEAR_RANGE_MAP[state.yearRange]
-        : NaN;
-    // Une saisie illisible (ex. « , ») donne NaN, sérialisé en `null` par JSON
-    // et rejeté en 422 : on omet le champ plutôt que de bloquer le partenaire.
-    const constructionYear = Number.isFinite(parsedYear) ? parsedYear : undefined;
-    const parsedSurface = parseFloat(state.surfaceArea);
-    const surfaceArea = Number.isFinite(parsedSurface) ? parsedSurface : undefined;
+    // Une saisie illisible serait sérialisée en `null` par JSON et rejetée en
+    // 422 : on omet le champ plutôt que de bloquer le partenaire.
+    const constructionYear =
+      parseInteger(state.exactYear) ??
+      (state.yearRange ? YEAR_RANGE_MAP[state.yearRange] : undefined);
+    const surfaceArea = parseDecimal(state.surfaceArea) ?? undefined;
 
     const suggestPayload = {
       postalCode: state.postalCode,
@@ -69,8 +88,9 @@ export default function Step6Screen() {
 
     let suggestions: SuggestionsResult;
     try {
-      suggestions = await suggestDiagnostics(suggestPayload, staffOrgId);
+      suggestions = await suggestDiagnostics(suggestPayload, staffOrgId, signal);
     } catch (err) {
+      if (signal.aborted) return;
       reportWizardError(err, 'step-6', 'suggest', suggestPayload);
       setError(
         describeWizardError(err, 'Impossible de récupérer les diagnostics. Réessayez dans quelques instants.'),
@@ -79,6 +99,7 @@ export default function Step6Screen() {
       return;
     }
 
+    if (signal.aborted) return;
     const selectedIds = setSuggestions(suggestions);
 
     // Compter TOUTES les suggestions (pas seulement les obligatoires) filtrées
@@ -100,8 +121,11 @@ export default function Step6Screen() {
         ...(gridCategory ? { gridCategory } : {}),
       };
       try {
-        setGridTotal(await calculateGridTotal(gridPayload, staffOrgId), gridCount);
+        const gridTotal = await calculateGridTotal(gridPayload, staffOrgId, signal);
+        if (signal.aborted) return;
+        setGridTotal(gridTotal, gridCount);
       } catch (err) {
+        if (signal.aborted) return;
         // Non bloquant : l'étape 7 recalcule le prix grille dès qu'il manque,
         // affiche l'erreur avec un bouton « Réessayer » et empêche l'envoi sans prix.
         reportWizardError(err, 'step-6', 'calculate-grid-total', gridPayload);

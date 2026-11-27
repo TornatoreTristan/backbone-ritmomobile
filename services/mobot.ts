@@ -1,7 +1,7 @@
 import { fetch as streamingFetch } from 'expo/fetch';
 
 import { API_URL } from '@/constants/api';
-import { ApiError, apiRequest } from '@/services/api';
+import { ApiError, apiRequest, notifyUnauthorized } from '@/services/api';
 import { getToken } from '@/services/auth-storage';
 import { createSseParser } from '@/services/mobot-sse';
 
@@ -162,6 +162,9 @@ export async function askMobotStream(
     signal,
   });
 
+  // Ce flux ne passe pas par `apiRequest` : sans ce relais, une session expirée
+  // n'affichait qu'un « Mobot ne répond pas » au lieu de renvoyer à la connexion.
+  if (response.status === 401) notifyUnauthorized();
   if (!response.ok || !response.body) {
     throw new MobotStreamError(response.status === 403 ? 'forbidden' : 'assistant_unavailable');
   }

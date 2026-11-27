@@ -6,6 +6,8 @@ import { WizardScreen } from '@/components/wizard/wizard-screen';
 import { Radius } from '@/constants/theme';
 import { selectQuoteTotals, useQuoteWizard } from '@/contexts/quote-wizard-context';
 import { useColors } from '@/hooks/use-theme-color';
+import { parseDecimal } from '@/services/quote-wizard-numbers';
+import { validateStaffPricing } from '@/services/quote-wizard-validation';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -23,6 +25,8 @@ export default function PricingScreen() {
   const colors = useColors();
 
   const totals = selectQuoteTotals(state);
+  const pricingValidation = validateStaffPricing(state);
+  const currentDiscount = parseDecimal(state.staffDiscountPercent);
 
   const [isEditingPrice, setIsEditingPrice] = useState(() => !!state.staffFinalPriceTtc);
 
@@ -32,8 +36,7 @@ export default function PricingScreen() {
   }
 
   function toggleDiscount(value: number) {
-    const current = Number(state.staffDiscountPercent);
-    update('staffDiscountPercent', current === value ? '' : String(value));
+    update('staffDiscountPercent', currentDiscount === value ? '' : String(value));
   }
 
   return (
@@ -72,9 +75,10 @@ export default function PricingScreen() {
               optional
               value={state.staffFinalPriceTtc}
               onChangeText={(t) => update('staffFinalPriceTtc', t)}
-              placeholder="Ex : 450.00"
+              placeholder="Ex : 450,00"
               keyboardType="decimal-pad"
               accessibilityLabel="Prix final TTC"
+              error={pricingValidation.errors.staffFinalPriceTtc}
             />
 
             <Button variant="ghost" size="sm" onPress={collapsePrice} style={styles.collapseBtn}>
@@ -96,10 +100,11 @@ export default function PricingScreen() {
             placeholder="Ex : 10"
             keyboardType="decimal-pad"
             accessibilityLabel="Remise en pourcentage"
+            error={pricingValidation.errors.staffDiscountPercent}
           />
           <View style={styles.chipsRow}>
             {DISCOUNT_PRESETS.map((preset) => {
-              const active = Number(state.staffDiscountPercent) === preset;
+              const active = currentDiscount === preset;
               return (
                 <Pressable
                   key={preset}
@@ -132,6 +137,7 @@ export default function PricingScreen() {
       <WizardFooter
         onBack={() => router.back()}
         onNext={() => router.push('/quote-wizard/rdv')}
+        nextDisabled={!pricingValidation.valid}
       />
     </>
   );

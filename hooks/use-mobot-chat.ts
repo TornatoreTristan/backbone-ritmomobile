@@ -1,5 +1,5 @@
 import { randomUUID } from 'expo-crypto';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { ChatEntry } from '@/components/mobot/chat-message';
 import {
@@ -50,6 +50,9 @@ export function useMobotChat(organizationId: string) {
   const [conversationId, setConversationId] = useState<string>(() => randomUUID());
   const [isStreaming, setIsStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Quitter l'écran (ou changer d'organisation) coupe la réponse en cours.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const updateEntry = (key: string, update: (entry: ChatEntry) => ChatEntry) =>
     setEntries((current) => current.map((entry) => (entry.key === key ? update(entry) : entry)));

@@ -4,8 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { StaleDataNotice } from '@/components/stale-data-notice';
 import { centeredContent } from '@/constants/layout';
-import { Radius } from '@/constants/theme';
+import { useScreenResource } from '@/hooks/use-screen-resource';
 import { useColors } from '@/hooks/use-theme-color';
 import { ApiError } from '@/services/api';
 import {
@@ -18,10 +19,10 @@ import {
   getFolderEmails,
   getFolderTimeline,
 } from '@/services/folder-activities';
+import { openDocumentUrl } from '@/services/open-link';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import * as WebBrowser from 'expo-web-browser';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ComponentProps, useCallback, useEffect, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { ComponentProps, useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -131,75 +132,71 @@ function formatRelative(iso: string | null): string {
   return dateTimeFormatter.format(date);
 }
 
+type SegmentData =
+  | { segment: 'activites'; items: FolderActivity[] }
+  | { segment: 'mail'; items: FolderEmail[] }
+  | { segment: 'historique'; items: FolderTimelineEntry[] };
+
+async function fetchSegment(folderId: string, segment: Segment): Promise<SegmentData> {
+  if (segment === 'activites') return { segment, items: await getFolderActivities(folderId) };
+  if (segment === 'mail') return { segment, items: await getFolderEmails(folderId) };
+  return { segment, items: await getFolderTimeline(folderId) };
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof ApiError && err.status === 403) {
+    return "Accès refusé. Vous n'êtes pas autorisé à consulter ce dossier.";
+  }
+  if (err instanceof ApiError && err.status === 404) return 'Dossier introuvable.';
+  return 'Impossible de charger les données. Veuillez réessayer.';
+}
+
+function segmentFromTab(tab: string | undefined): Segment {
+  return tab === 'mail' || tab === 'historique' ? tab : 'activites';
+}
+
 export default function FolderActivitiesScreen() {
   const { folderId, tab } = useLocalSearchParams<{ folderId: string; tab?: string }>();
   const colors = useColors();
   const router = useRouter();
 
-  const [segment, setSegment] = useState<Segment>(() =>
-    tab === 'mail' || tab === 'historique' ? tab : 'activites',
+  // L'écran reste monté d'un dossier à l'autre (il vit dans les Tabs) : l'onglet
+  // affiché suit le paramètre `tab`, sauf choix fait dans le dock pour ce même
+  // couple (dossier, tab). Ce choix est oublié en quittant l'écran.
+  const [picked, setPicked] = useState<{ folderId: string; tab?: string; segment: Segment } | null>(
+    null,
   );
-  const [activities, setActivities] = useState<FolderActivity[]>([]);
-  const [emails, setEmails] = useState<FolderEmail[]>([]);
-  const [timeline, setTimeline] = useState<FolderTimelineEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const segment =
+    picked && picked.folderId === folderId && picked.tab === tab
+      ? picked.segment
+      : segmentFromTab(tab);
 
-  const load = useCallback(
-    async (silent = false) => {
-      if (!folderId) {
-        setErrorMessage('Dossier introuvable.');
-        setIsLoading(false);
-        return;
-      }
-      if (!silent) setIsLoading(true);
-      setErrorMessage(null);
-      try {
-        if (segment === 'activites') setActivities(await getFolderActivities(folderId));
-        else if (segment === 'mail') setEmails(await getFolderEmails(folderId));
-        else setTimeline(await getFolderTimeline(folderId));
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 403) {
-          setErrorMessage("Accès refusé. Vous n'êtes pas autorisé à consulter ce dossier.");
-        } else if (err instanceof ApiError && err.status === 404) {
-          setErrorMessage('Dossier introuvable.');
-        } else {
-          setErrorMessage('Impossible de charger les données. Veuillez réessayer.');
-        }
-      } finally {
-        setIsLoading(false);
-        setIsRefreshing(false);
-      }
-    },
-    [folderId, segment],
+  useFocusEffect(
+    useCallback(() => {
+      return () => setPicked(null);
+    }, []),
   );
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Clé = dossier + onglet : la réponse tardive d'un autre onglet (ou d'un autre
+  // dossier) ne peut ni remplacer la liste ni lever le chargement en cours.
+  const { data, isLoading, isRefreshing, error, refreshFailed, reload, refresh } =
+    useScreenResource(
+      folderId ? `${folderId}:${segment}` : null,
+      () => fetchSegment(folderId, segment),
+      describeError,
+    );
 
-  const handleRefresh = useCallback(() => {
-    setIsRefreshing(true);
-    load(true);
-  }, [load]);
+  function handleDock(key: DockKey) {
+    if (key === 'infos') {
+      // Retour à la fiche du dossier ouvert (pas à l'accueil).
+      router.navigate({ pathname: '/folders/[id]', params: { id: folderId } });
+      return;
+    }
+    setPicked({ folderId, tab, segment: key });
+  }
 
-  const handleDock = useCallback(
-    (key: DockKey) => {
-      if (key === 'infos') {
-        // Retour à la fiche du dossier ouvert (pas à l'accueil).
-        router.navigate({ pathname: '/folders/[id]', params: { id: folderId } });
-        return;
-      }
-      setSegment(key);
-    },
-    [router, folderId],
-  );
-
-  const isEmpty =
-    (segment === 'activites' && activities.length === 0) ||
-    (segment === 'mail' && emails.length === 0) ||
-    (segment === 'historique' && timeline.length === 0);
+  const errorMessage = folderId ? error : 'Dossier introuvable.';
+  const isEmpty = !data || data.items.length === 0;
 
   return (
     <ThemedView style={styles.container}>
@@ -219,7 +216,7 @@ export default function FolderActivitiesScreen() {
             <ThemedText tone="destructive" style={styles.errorText}>
               {errorMessage}
             </ThemedText>
-            <Button variant="outline" size="sm" onPress={() => load()} style={{ marginTop: 12 }}>
+            <Button variant="outline" size="sm" onPress={reload} style={{ marginTop: 12 }}>
               Réessayer
             </Button>
           </View>
@@ -230,10 +227,11 @@ export default function FolderActivitiesScreen() {
             refreshControl={
               <RefreshControl
                 refreshing={isRefreshing}
-                onRefresh={handleRefresh}
+                onRefresh={refresh}
                 tintColor={colors.foreground}
               />
             }>
+            <StaleDataNotice visible={refreshFailed} />
             {isEmpty ? (
               <ThemedText type="muted" style={styles.empty}>
                 {segment === 'mail'
@@ -242,25 +240,25 @@ export default function FolderActivitiesScreen() {
                     ? 'Aucun événement'
                     : 'Aucune activité'}
               </ThemedText>
-            ) : segment === 'activites' ? (
+            ) : data.segment === 'activites' ? (
               <View style={styles.list}>
-                {activities.map((a) => (
+                {data.items.map((a) => (
                   <ActivityCard key={a.id} activity={a} />
                 ))}
               </View>
-            ) : segment === 'mail' ? (
+            ) : data.segment === 'mail' ? (
               <View style={styles.list}>
-                {emails.map((e) => (
+                {data.items.map((e) => (
                   <EmailCard key={e.id} email={e} />
                 ))}
               </View>
             ) : (
               <View style={styles.timeline}>
-                {timeline.map((entry, idx) => (
+                {data.items.map((entry, idx) => (
                   <TimelineRow
                     key={entry.id}
                     entry={entry}
-                    isLast={idx === timeline.length - 1}
+                    isLast={idx === data.items.length - 1}
                   />
                 ))}
               </View>
@@ -396,7 +394,7 @@ function EmailCard({ email }: { email: FolderEmail }) {
       title={email.subject || '(sans objet)'}
       badge={{ label, tone }}
       meta={meta}
-      onPress={email.previewUrl ? () => WebBrowser.openBrowserAsync(email.previewUrl!) : undefined}
+      onPress={email.previewUrl ? () => openDocumentUrl(email.previewUrl!) : undefined}
       openLabel={email.previewUrl ? "Ouvrir l'email" : undefined}
     />
   );

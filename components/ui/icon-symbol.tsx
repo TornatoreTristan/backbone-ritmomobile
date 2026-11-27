@@ -5,16 +5,27 @@ import { SymbolWeight, SymbolViewProps } from 'expo-symbols';
 import { ComponentProps } from 'react';
 import { OpaqueColorValue, type StyleProp, type TextStyle } from 'react-native';
 
-type IconMapping = Record<SymbolViewProps['name'], ComponentProps<typeof MaterialIcons>['name']>;
+type IconMapping = Partial<
+  Record<SymbolViewProps['name'], ComponentProps<typeof MaterialIcons>['name']>
+>;
 type IconSymbolName = keyof typeof MAPPING;
 
 /**
  * Add your SF Symbols to Material Icons mappings here.
+ * `satisfies` (et non `as`) : `IconSymbolName` se limite aux icônes réellement
+ * mappées, donc un nom oublié ici est une erreur de compilation au lieu d'une
+ * icône vide sur Android.
  * - see Material Icons in the [Icons Directory](https://icons.expo.fyi).
  * - see SF Symbols in the [SF Symbols](https://developer.apple.com/sf-symbols/) app.
  */
 const MAPPING = {
   'house.fill': 'home',
+  calendar: 'calendar-today',
+  'folder.fill': 'folder',
+  'wrench.fill': 'build',
+  'doc.text.fill': 'description',
+  'person.2.fill': 'group',
+  headphones: 'headset',
   'paperplane.fill': 'send',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
@@ -31,7 +42,7 @@ const MAPPING = {
   'hand.thumbsup.fill': 'thumb-up',
   'hand.thumbsdown': 'thumb-down-off-alt',
   'hand.thumbsdown.fill': 'thumb-down',
-} as IconMapping;
+} as const satisfies IconMapping;
 
 /**
  * An icon component that uses native SF Symbols on iOS, and Material Icons on Android and web.

@@ -4,7 +4,7 @@ import { WizardField } from '@/components/wizard/wizard-field';
 import { WizardFooter } from '@/components/wizard/wizard-footer';
 import { WizardScreen } from '@/components/wizard/wizard-screen';
 import { useQuoteWizard } from '@/contexts/quote-wizard-context';
-import { validateStep } from '@/services/quote-wizard-validation';
+import { EMAIL_REGEX, validateStep } from '@/services/quote-wizard-validation';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -16,8 +16,6 @@ const OWNER_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'entreprise', label: 'Entreprise' },
   { value: 'autre', label: 'Autre' },
 ];
-
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Step8Screen() {
   const router = useRouter();
@@ -54,6 +52,7 @@ export default function Step8Screen() {
         {state.ownerType === 'entreprise' ? (
           <WizardField
             label="Nom de la société"
+            required
             value={state.companyName}
             onChangeText={(t) => update('companyName', t)}
             placeholder="Nom de l'entreprise"

@@ -2,43 +2,45 @@ import { ThemedText } from '@/components/themed-text';
 import { WizardField } from '@/components/wizard/wizard-field';
 import { Radius } from '@/constants/theme';
 import { useColors } from '@/hooks/use-theme-color';
+import { formatManualRdv, parseManualRdv } from '@/services/scheduling';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 interface ManualRdvInputProps {
+  /** RDV courant du wizard (ISO 8601) ou chaîne vide. */
   value: string;
-  onChangeText: (text: string) => void;
-}
-
-/** Returns true when `s` is a non-empty string that parses to a valid Date. */
-function isValidIso(s: string): boolean {
-  if (s === '') return false;
-  return !isNaN(new Date(s).getTime());
+  /** Reçoit l'ISO du RDV saisi, ou une chaîne vide quand la saisie est vide ou invalide. */
+  onChangeText: (iso: string) => void;
 }
 
 /**
- * Fallback manual ISO date-time input.
- * Accepts any ISO 8601 string (e.g. 2026-06-10T09:00:00.000Z).
- * MIN-3: only propagates the value upstream when it parses to a valid Date;
- * otherwise it keeps the raw draft locally and shows an inline error hint.
+ * Saisie manuelle du RDV au format « JJ/MM/AAAA HH:MM » (heure de Paris).
+ *
+ * Le champ ne laisse jamais un ancien RDV en place derrière une saisie
+ * invalide : tant que le texte n'est pas une date valide, le RDV du wizard est
+ * vidé. À l'inverse, un créneau choisi dans la grille se reflète dans le champ.
  */
 export function ManualRdvInput({ value, onChangeText }: ManualRdvInputProps) {
   const colors = useColors();
 
-  // Local draft: the text the user is currently typing (may be invalid)
-  const [draft, setDraft] = useState(value);
-  const [touched, setTouched] = useState(false);
+  const [draft, setDraft] = useState(() => formatManualRdv(value));
+  // Dernière valeur du wizard reflétée par `draft` : si `value` change sans
+  // passer par ce champ (créneau choisi, RDV effacé), on resynchronise le texte.
+  const [syncedValue, setSyncedValue] = useState(value);
+  if (value !== syncedValue) {
+    setSyncedValue(value);
+    setDraft(formatManualRdv(value));
+  }
 
-  const showError = touched && draft !== '' && !isValidIso(draft);
+  const parsed = draft.trim() === '' ? null : parseManualRdv(draft);
+  const error = parsed && 'error' in parsed ? parsed.error : null;
 
   function handleChange(raw: string) {
-    const trimmed = raw.trim();
-    setDraft(trimmed);
-    setTouched(true);
-    if (trimmed === '' || isValidIso(trimmed)) {
-      // Only forward valid (or cleared) values to the parent / wizard state
-      onChangeText(trimmed);
-    }
+    setDraft(raw);
+    const result = raw.trim() === '' ? null : parseManualRdv(raw);
+    const iso = result && 'iso' in result ? result.iso : '';
+    setSyncedValue(iso);
+    onChangeText(iso);
   }
 
   return (
@@ -55,19 +57,16 @@ export function ManualRdvInput({ value, onChangeText }: ManualRdvInputProps) {
         optional
         value={draft}
         onChangeText={handleChange}
-        placeholder="2026-06-10T09:00:00.000Z"
+        placeholder="10/06/2026 09:00"
         autoCapitalize="none"
         autoCorrect={false}
-        keyboardType="default"
-        accessibilityLabel="Date et heure du rendez-vous au format ISO 8601"
+        keyboardType="numbers-and-punctuation"
+        accessibilityLabel="Date et heure du rendez-vous, au format jour, mois, année, heure, minutes"
+        error={error}
       />
-      {showError ? (
-        <ThemedText style={[styles.errorHint, { color: colors.destructive }]}>
-          Date invalide — utilisez le format ISO 8601, ex : 2026-06-10T09:00:00.000Z
-        </ThemedText>
-      ) : (
+      {error ? null : (
         <ThemedText style={[styles.hint, { color: colors.mutedForeground }]}>
-          Format ISO 8601 — ex : 2026-06-10T09:00:00.000Z
+          Format : JJ/MM/AAAA HH:MM (heure de Paris)
         </ThemedText>
       )}
     </View>
@@ -88,10 +87,5 @@ const styles = StyleSheet.create({
   hint: {
     fontSize: 12,
     marginTop: -4,
-  },
-  errorHint: {
-    fontSize: 12,
-    marginTop: -4,
-    fontWeight: '500',
   },
 });

@@ -15,16 +15,17 @@ npm run ios          # expo start --ios
 npm run android      # expo start --android
 npm run web          # expo start --web
 npm run lint         # expo lint (eslint-config-expo)
+npm test             # jest (jest-expo) — tests unitaires des services dans __tests__/
 ```
 
-There is no test runner configured. `npm run reset-project` is the Expo template's nuke-and-restart script — do not run it casually.
+Jest ne couvre que la logique des services (devis, planification, Mobot) ; il n'y a pas de tests d'écran. `npm run reset-project` is the Expo template's nuke-and-restart script — do not run it casually.
 
 Native modules in use (`@react-native-google-signin/google-signin`, `expo-secure-store`) require a custom dev client, **not** Expo Go. Builds go through EAS (`eas.json` defines `development`, `preview`, `production` profiles; project id is in `app.json`).
 
 ## Architecture
 
 ### Routing — Expo Router (file-based)
-- `app/_layout.tsx` is the root: wraps everything in `ThemeProvider` + `AuthProvider` and declares the top-level Stack with three routes: `login`, `(tabs)`, `modal`. `unstable_settings.anchor = '(tabs)'` makes the tab group the default.
+- `app/_layout.tsx` is the root: wraps everything in `ThemeProvider` + `AuthProvider` and declares the top-level Stack: `login`, `(tabs)`, and the modals (`settings`, `switch-organization`, `delete-account`, `search`, `folder-edit/[id]`, `quote-wizard`). `unstable_settings.anchor = '(tabs)'` makes the tab group the default.
 - `app/(tabs)/` is the authenticated area (group route, no URL segment).
 - `app/login.tsx` is the unauthenticated entry point.
 - Typed routes are enabled (`experiments.typedRoutes: true` in `app.json`).
@@ -64,10 +65,10 @@ Wraps `expo-secure-store` with two keys: `auth_token` and `auth_user`. The `Stor
 
 ### Versioning
 - iOS uses `expo.version` + `expo.ios.buildNumber` (currently set by EAS auto-increment in production profile).
-- Android uses `expo.version` + `expo.android.versionCode`. The `versionCode` is currently pinned in `app.json`; **bump it manually in any PR that ships an Android build to a higher track (internal → closed → production)**. EAS production profile has `autoIncrement: true` as a safety net, but explicit bumps make release diffs reviewable.
+- Android uses `expo.version` + `expo.android.versionCode`. `eas.json` sets `cli.appVersionSource: "remote"`, so **EAS owns the build numbers**: the `versionCode` (and iOS `buildNumber`) written in `app.json` are ignored at build time, and the production profile's `autoIncrement: true` bumps the remote value. Check or set it with `eas build:version:get` / `eas build:version:set`; editing `app.json` has no effect.
 
 ### EAS environment variables (required for production builds)
-`EXPO_PUBLIC_SENTRY_DSN` gates crash reporting: `Sentry.init({ enabled: SENTRY_DSN !== '' && !__DEV__ })` (`app/_layout.tsx`, `constants/api.ts`). When it is unset, Sentry silently no-ops — **as of 2026-08-05 no variable was configured at all, so Sentry had never actually been active in production.** Verify with `eas env:list production` before trusting any absence of alerts.
+`EXPO_PUBLIC_SENTRY_DSN` gates crash reporting: `Sentry.init({ enabled: SENTRY_DSN !== '' && !__DEV__ })` (`app/_layout.tsx`, `constants/api.ts`). When it is unset, Sentry silently no-ops — **as of 2026-11-27 `eas env:list production` still returned no variable at all, so Sentry has never actually been active in production.** Verify with `eas env:list production` before trusting any absence of alerts.
 
 ```bash
 eas env:create --scope project --environment production \

@@ -12,6 +12,21 @@ const FIELD_LABELS: Record<string, string> = {
   surfaceArea: 'surface',
   diagnosticCount: 'nombre de diagnostics',
   gridCategory: 'catégorie de grille',
+  // Champs propres à la soumission du dossier
+  roomCount: 'nombre de pièces',
+  clientName: 'nom du propriétaire',
+  clientEmail: 'email du propriétaire',
+  clientPhone: 'téléphone du propriétaire',
+  clientPostalCode: 'code postal du propriétaire',
+  billingEmail: 'email de facturation',
+  billingPostalCode: 'code postal de facturation',
+  items: 'diagnostics sélectionnés',
+  finalPriceTtc: 'prix final',
+  originalPriceTtc: 'prix barré',
+  discountPercent: 'remise',
+  rdvDate: 'date du rendez-vous',
+  rdvDuration: 'durée du rendez-vous',
+  technicians: 'techniciens',
 };
 
 /**
@@ -79,7 +94,7 @@ export function describeWizardError(error: unknown, fallback: string): string {
     ];
     return labels.length > 0
       ? `Information invalide : ${labels.join(', ')}. Revenez aux étapes précédentes pour la corriger.`
-      : 'Certaines informations du bien sont invalides. Revenez aux étapes précédentes pour les vérifier.';
+      : 'Certaines informations sont invalides. Revenez aux étapes précédentes pour les vérifier.';
   }
   if (error.status >= 500) {
     return 'Le serveur a rencontré une erreur. Réessayez dans quelques instants.';

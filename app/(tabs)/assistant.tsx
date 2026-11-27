@@ -50,7 +50,11 @@ export default function AssistantScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.flex} edges={['top']}>
         {status && currentOrganization ? (
-          <MobotChat organizationId={currentOrganization.id} role={status.role} />
+          <MobotChat
+            key={currentOrganization.id}
+            organizationId={currentOrganization.id}
+            role={status.role}
+          />
         ) : (
           <>
             <ScreenHeader title="Mobot" />

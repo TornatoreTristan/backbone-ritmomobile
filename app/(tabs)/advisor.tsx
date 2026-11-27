@@ -3,17 +3,17 @@ import { Card } from '@/components/ui/card';
 import { ScreenHeader } from '@/components/screen-header';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { StaleDataNotice } from '@/components/stale-data-notice';
 import { centeredContent } from '@/constants/layout';
 import { Radius } from '@/constants/theme';
 import { useOrganization } from '@/contexts/organization-context';
+import { useScreenResource } from '@/hooks/use-screen-resource';
 import { useColors } from '@/hooks/use-theme-color';
 import { type Advisor, getMyAdvisors } from '@/services/advisors';
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { openExternalUrl, telUrl } from '@/services/open-link';
 import {
   ActivityIndicator,
   Image,
-  Linking,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -45,35 +45,12 @@ export default function AdvisorScreen() {
 function AdvisorContent() {
   const { currentOrganization } = useOrganization();
   const colors = useColors();
-  const [advisors, setAdvisors] = useState<Advisor[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadAdvisors = useCallback(async (silent = false) => {
-    if (!silent) setIsLoading(true);
-    setError(null);
-    try {
-      const data = await getMyAdvisors();
-      setAdvisors(data);
-    } catch {
-      setError('Impossible de charger les conseillers.');
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadAdvisors();
-    }, [loadAdvisors]),
+  const { data, isLoading, isRefreshing, error, refreshFailed, refresh } = useScreenResource(
+    currentOrganization?.id ?? null,
+    () => getMyAdvisors(),
+    'Impossible de charger les conseillers.',
   );
-
-  const handleRefresh = useCallback(() => {
-    setIsRefreshing(true);
-    loadAdvisors(true);
-  }, [loadAdvisors]);
+  const advisors: Advisor[] = data ?? [];
 
   return (
     <ScrollView
@@ -81,11 +58,13 @@ function AdvisorContent() {
       refreshControl={
         <RefreshControl
           refreshing={isRefreshing}
-          onRefresh={handleRefresh}
+          onRefresh={refresh}
           tintColor={colors.foreground}
         />
       }>
       {currentOrganization ? <OrganizationCard /> : null}
+
+      <StaleDataNotice visible={refreshFailed} />
 
       <View style={styles.section}>
         <ThemedText type="label" tone="mutedForeground" style={styles.sectionLabel}>
@@ -161,21 +140,23 @@ function OrganizationCard() {
             <ContactRow
               label="Email"
               value={email}
-              onPress={() => Linking.openURL(`mailto:${email}`)}
+              onPress={() => openExternalUrl(`mailto:${email}`)}
             />
           ) : null}
           {phone ? (
             <ContactRow
               label="Téléphone"
               value={phone}
-              onPress={() => Linking.openURL(`tel:${phone.replace(/\s/g, '')}`)}
+              onPress={() => openExternalUrl(telUrl(phone))}
             />
           ) : null}
           {website ? (
             <ContactRow
               label="Site web"
               value={website}
-              onPress={() => Linking.openURL(website.startsWith('http') ? website : `https://${website}`)}
+              onPress={() =>
+                openExternalUrl(/^https?:\/\//i.test(website) ? website : `https://${website}`)
+              }
             />
           ) : null}
         </View>
@@ -207,7 +188,7 @@ function AdvisorRow({ advisor }: { advisor: Advisor }) {
 
   return (
     <Pressable
-      onPress={() => Linking.openURL(`mailto:${advisor.email}`)}
+      onPress={() => openExternalUrl(`mailto:${advisor.email}`)}
       accessibilityRole="button"
       accessibilityLabel={`Contacter ${displayName} par email`}
       style={({ pressed }) => [

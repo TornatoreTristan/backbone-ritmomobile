@@ -1,7 +1,9 @@
 import { showAbandonConfirm } from '@/components/wizard/confirm-abandon-sheet';
 import { WizardHeader } from '@/components/wizard/wizard-header';
+import { useAuth } from '@/contexts/auth-context';
 import { useOrganization } from '@/contexts/organization-context';
 import { QuoteWizardProvider, useQuoteWizard } from '@/contexts/quote-wizard-context';
+import { wizardDraftOwner } from '@/services/quote-wizard-storage';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useEffect, useRef } from 'react';
 import { Alert, View } from 'react-native';
@@ -98,8 +100,12 @@ function WizardLayoutInner() {
 }
 
 export default function QuoteWizardLayout() {
+  const { user } = useAuth();
+  const { currentOrganization } = useOrganization();
+  const owner = user ? wizardDraftOwner(user.id, currentOrganization?.id) : null;
+
   return (
-    <QuoteWizardProvider>
+    <QuoteWizardProvider owner={owner}>
       <WizardLayoutInner />
     </QuoteWizardProvider>
   );

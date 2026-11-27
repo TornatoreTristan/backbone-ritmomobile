@@ -14,6 +14,7 @@ import {
   type SuggestedProduct,
 } from '@/services/quote-wizard';
 import { describeWizardError, reportWizardError } from '@/services/quote-wizard-errors';
+import { parseDecimal } from '@/services/quote-wizard-numbers';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -113,6 +114,8 @@ export default function Step7Screen() {
   // Bloque l'envoi si des diagnostics grille sont sélectionnés mais qu'on n'a pas
   // de prix grille valide : sans ça l'app enverrait des diagnostics à 0 €.
   const gridPriceMissing = selectedGridCount > 0 && !hasValidGridTotal;
+  // Un devis sans aucune ligne ne doit ni avancer ni être soumis.
+  const nothingSelected = totals.selected.length === 0;
 
   // Nombre pour lequel un calcul a déjà été lancé — initialisé depuis le total
   // hérité de l'étape 6 pour ne pas refaire l'appel inutilement à l'arrivée.
@@ -121,12 +124,25 @@ export default function Step7Screen() {
   // la plus lente écraser la plus récente.
   const requestIdRef = useRef(0);
 
+  // Une réponse arrivée après la sortie de l'écran (wizard abandonné) est ignorée.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   async function fetchGridTotal(gridProductCount: number) {
     requestedCountRef.current = gridProductCount;
 
     // L'API refuse diagnosticCount < 1 : sans diagnostic grille, il n'y a pas de
     // prix de grille à afficher, seulement les produits à prix fixe.
     if (gridProductCount === 0) {
+      // Invalide aussi un calcul encore en vol : sa réponse ne doit pas
+      // réinstaller un prix grille alors qu'il n'y a plus de diagnostic grille.
+      requestIdRef.current += 1;
+      setGridLoading(false);
       setGridError(null);
       setGridTotal(null, 0);
       return;
@@ -136,25 +152,27 @@ export default function Step7Screen() {
     setGridLoading(true);
     setGridError(null);
 
-    // NaN (saisie illisible) serait sérialisé en `null` et rejeté en 422.
-    const parsedSurface = parseFloat(state.surfaceArea);
+    const parsedSurface = parseDecimal(state.surfaceArea);
     const gridCategory = gridCategoryFor(state.projectType);
     const payload = {
       postalCode: state.postalCode,
       propertyType: normalizePropertyType(state.propertyType ?? ''),
       diagnosticCount: gridProductCount,
-      ...(Number.isFinite(parsedSurface) ? { surfaceArea: parsedSurface } : {}),
+      ...(parsedSurface !== null ? { surfaceArea: parsedSurface } : {}),
       ...(gridCategory ? { gridCategory } : {}),
     };
 
     try {
       const gridTotal = await calculateGridTotal(payload, staffOrgId);
 
-      if (requestId !== requestIdRef.current) return;
+      if (!mountedRef.current || requestId !== requestIdRef.current) return;
       setGridTotal(gridTotal, gridProductCount);
     } catch (err) {
+      if (!mountedRef.current || requestId !== requestIdRef.current) return;
       reportWizardError(err, 'step-7', 'calculate-grid-total', payload);
-      if (requestId !== requestIdRef.current) return;
+      // Le total précédent valait pour une autre sélection : le garder
+      // laisserait un prix faux à l'écran avec « Suivant » actif.
+      setGridTotal(null, 0);
       setGridError(describeWizardError(err, 'Impossible de calculer le prix grille.'));
     } finally {
       if (requestId === requestIdRef.current) setGridLoading(false);
@@ -286,6 +304,10 @@ export default function Step7Screen() {
                 ? 'Calcul du prix grille en cours…'
                 : 'Aucun prix de grille pour ce bien (zone, type de bien ou surface non couverts par la grille de votre organisation).'}
             </ThemedText>
+          ) : nothingSelected && allSuggestions.length > 0 ? (
+            <ThemedText style={[styles.gridErrorText, { color: colors.destructive }]}>
+              Sélectionnez au moins un diagnostic pour continuer.
+            </ThemedText>
           ) : null}
         </View>
       </WizardScreen>
@@ -293,7 +315,7 @@ export default function Step7Screen() {
       <WizardFooter
         onBack={() => router.back()}
         loading={gridLoading}
-        nextDisabled={gridLoading || gridPriceMissing}
+        nextDisabled={gridLoading || gridPriceMissing || nothingSelected}
         onNext={() =>
           router.push(isStaff ? '/quote-wizard/pricing' : '/quote-wizard/step-8')
         }

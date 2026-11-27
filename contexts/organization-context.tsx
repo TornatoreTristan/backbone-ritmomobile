@@ -10,7 +10,14 @@ import {
   setRoleOverride as persistRoleOverride,
   type RoleOverride,
 } from '@/services/role-storage';
-import { createContext, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from 'react';
 
 type OrganizationContextType = {
   organizations: Organization[];
@@ -55,9 +62,14 @@ export function OrganizationProvider({ children }: PropsWithChildren) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [roleOverride, setRoleOverrideState] = useState<RoleOverride>(null);
+  // Une déconnexion/reconnexion rapide ne doit pas laisser la réponse du compte
+  // précédent écraser celle du compte courant.
+  const loadIdRef = useRef(0);
 
   useEffect(() => {
     if (!user) {
+      loadIdRef.current += 1;
+      setIsLoading(false);
       setOrganizations([]);
       setCurrentOrganization(null);
       setError(null);
@@ -65,13 +77,16 @@ export function OrganizationProvider({ children }: PropsWithChildren) {
     }
     loadOrganizations();
     getRoleOverride().then(setRoleOverrideState);
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   async function loadOrganizations() {
+    const loadId = ++loadIdRef.current;
     setIsLoading(true);
     setError(null);
     try {
       const [orgs, storedId] = await Promise.all([getMyOrganizations(), getCurrentOrgId()]);
+      if (loadId !== loadIdRef.current) return;
       setOrganizations(orgs);
 
       if (orgs.length === 0) {
@@ -87,10 +102,11 @@ export function OrganizationProvider({ children }: PropsWithChildren) {
         await saveCurrentOrgId(resolved.id);
       }
     } catch (e: unknown) {
+      if (loadId !== loadIdRef.current) return;
       const message = e instanceof Error ? e.message : 'Erreur lors du chargement des organisations';
       setError(message);
     } finally {
-      setIsLoading(false);
+      if (loadId === loadIdRef.current) setIsLoading(false);
     }
   }
 
@@ -110,10 +126,9 @@ export function OrganizationProvider({ children }: PropsWithChildren) {
     setRoleOverrideState(role);
   }
 
-  const effectiveRoles = useMemo<string[]>(() => {
-    if (roleOverride) return [roleOverride];
-    return currentOrganization?.roles ?? [];
-  }, [currentOrganization, roleOverride]);
+  const effectiveRoles: string[] = roleOverride
+    ? [roleOverride]
+    : (currentOrganization?.roles ?? []);
 
   const isTechnician = effectiveRoles.includes('technician');
   const isPartner = effectiveRoles.includes('partner');

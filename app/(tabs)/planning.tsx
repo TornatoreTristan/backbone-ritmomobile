@@ -6,17 +6,14 @@ import { PressableCard } from '@/components/ui/card';
 import { ScreenHeader } from '@/components/screen-header';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { StaleDataNotice } from '@/components/stale-data-notice';
 import { centeredContent } from '@/constants/layout';
+import { INTERVENTION_STATUS_LABELS, INTERVENTION_STATUS_TONE } from '@/constants/status-maps';
+import { useOrganization } from '@/contexts/organization-context';
+import { useScreenResource } from '@/hooks/use-screen-resource';
 import { useColors } from '@/hooks/use-theme-color';
-import {
-  INTERVENTION_STATUS_LABELS,
-  INTERVENTION_STATUS_TONE,
-  type Intervention,
-  type PlanningDay,
-  getPlanning,
-} from '@/services/technician';
-import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { type Intervention, type PlanningDay, getPlanning } from '@/services/technician';
+import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -86,35 +83,14 @@ export default function PlanningScreen() {
 function PlanningView() {
   const router = useRouter();
   const colors = useColors();
-  const [days, setDays] = useState<PlanningDay[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setIsLoading(true);
-    setError(null);
-    try {
-      const data = await getPlanning();
-      setDays(data);
-    } catch {
-      setError('Impossible de charger le planning.');
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load]),
-  );
-
-  const handleRefresh = useCallback(() => {
-    setIsRefreshing(true);
-    load(true);
-  }, [load]);
+  const { currentOrganization } = useOrganization();
+  const { data, isLoading, isRefreshing, error, refreshFailed, reload, refresh } =
+    useScreenResource(
+      currentOrganization?.id ?? null,
+      () => getPlanning(),
+      'Impossible de charger le planning.',
+    );
+  const days: PlanningDay[] = data ?? [];
 
   if (isLoading) {
     return (
@@ -130,7 +106,7 @@ function PlanningView() {
         <ThemedText tone="destructive" style={styles.errorText}>
           {error}
         </ThemedText>
-        <Button variant="outline" size="sm" onPress={() => load()} style={styles.retry}>
+        <Button variant="outline" size="sm" onPress={reload} style={styles.retry}>
           Réessayer
         </Button>
       </View>
@@ -143,10 +119,11 @@ function PlanningView() {
       refreshControl={
         <RefreshControl
           refreshing={isRefreshing}
-          onRefresh={handleRefresh}
+          onRefresh={refresh}
           tintColor={colors.foreground}
         />
       }>
+      <StaleDataNotice visible={refreshFailed} />
       {days.map((day) => (
         <DaySection
           key={day.date}
@@ -213,7 +190,9 @@ function PlanningRow({
         </Badge>
       </View>
       <ThemedText type="muted" numberOfLines={1}>
-        {intervention.prestation} · {intervention.owner.name}
+        {intervention.owner?.name
+          ? `${intervention.prestation} · ${intervention.owner.name}`
+          : intervention.prestation}
       </ThemedText>
       <ThemedText type="caption" tone="mutedForeground" numberOfLines={1}>
         {intervention.propertyAddress}

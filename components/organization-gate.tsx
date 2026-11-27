@@ -1,4 +1,5 @@
 import { ThemedText } from '@/components/themed-text';
+import { Button } from '@/components/ui/button';
 import { useOrganization } from '@/contexts/organization-context';
 import { useColors } from '@/hooks/use-theme-color';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
@@ -9,9 +10,10 @@ interface OrganizationGateProps {
 }
 
 export function OrganizationGate({ partnerOnly = true, children }: OrganizationGateProps) {
-  const { currentOrganization, isLoading, error } = useOrganization();
+  // Rôles effectifs (override dev compris) : même source que la barre d'onglets.
+  const { currentOrganization, isLoading, error, refresh, isPartner, effectiveRoles } =
+    useOrganization();
   const colors = useColors();
-  const isPartner = currentOrganization?.roles.includes('partner') ?? false;
 
   if (isLoading) {
     return (
@@ -23,7 +25,12 @@ export function OrganizationGate({ partnerOnly = true, children }: OrganizationG
   if (error) {
     return (
       <View style={styles.center}>
-        <ThemedText tone="destructive">{error}</ThemedText>
+        <ThemedText tone="destructive" style={styles.emptyTitle}>
+          {error}
+        </ThemedText>
+        <Button variant="outline" onPress={refresh} style={styles.retry}>
+          Réessayer
+        </Button>
       </View>
     );
   }
@@ -35,6 +42,18 @@ export function OrganizationGate({ partnerOnly = true, children }: OrganizationG
         </ThemedText>
         <ThemedText type="muted" style={styles.emptyHint}>
           Demandez à votre administrateur de vous inviter.
+        </ThemedText>
+      </View>
+    );
+  }
+  if (effectiveRoles.length === 0) {
+    return (
+      <View style={styles.center}>
+        <ThemedText style={styles.emptyTitle}>
+          Aucun rôle ne vous est attribué dans cette organisation.
+        </ThemedText>
+        <ThemedText type="muted" style={styles.emptyHint}>
+          Demandez à votre administrateur de vous en attribuer un.
         </ThemedText>
       </View>
     );
@@ -61,4 +80,5 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { textAlign: 'center', fontSize: 15 },
   emptyHint: { textAlign: 'center', marginTop: 4 },
+  retry: { marginTop: 12 },
 });

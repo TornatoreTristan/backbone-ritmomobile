@@ -7,6 +7,12 @@ import { useRouter } from 'expo-router';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+const ROLE_LABELS: Record<string, string> = {
+  owner: 'Propriétaire',
+  admin: 'Administrateur',
+  member: 'Membre',
+};
+
 export default function SwitchOrganizationModal() {
   const { organizations, currentOrganization, isLoading, switchOrganization } = useOrganization();
   const colors = useColors();
@@ -49,7 +55,7 @@ export default function SwitchOrganizationModal() {
                   <View style={styles.rowContent}>
                     <ThemedText type="defaultSemiBold">{item.name}</ThemedText>
                     <ThemedText type="caption" tone="mutedForeground" style={styles.role}>
-                      {item.role}
+                      {ROLE_LABELS[item.role] ?? item.role}
                     </ThemedText>
                   </View>
                   {isActive ? (

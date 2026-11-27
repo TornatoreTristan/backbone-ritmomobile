@@ -6,12 +6,10 @@ import { WizardScreen } from '@/components/wizard/wizard-screen';
 import { Radius } from '@/constants/theme';
 import { useQuoteWizard } from '@/contexts/quote-wizard-context';
 import { useColors } from '@/hooks/use-theme-color';
-import { validateStep } from '@/services/quote-wizard-validation';
+import { EMAIL_REGEX, validateStep } from '@/services/quote-wizard-validation';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Step11Screen() {
   const router = useRouter();

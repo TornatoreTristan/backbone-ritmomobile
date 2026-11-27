@@ -45,7 +45,12 @@ export default function Step3Screen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const canProceed = validateStep(3, state).valid;
+  const validation = validateStep(3, state);
+  const canProceed = validation.valid;
+  // Erreur affichée seulement une fois le champ renseigné : « requis » sur un
+  // champ encore vide n'apporte rien, « Suivant » est déjà désactivé.
+  const surfaceError = state.surfaceArea.trim() !== '' ? validation.errors.surfaceArea : null;
+  const roomCountError = state.roomCount.trim() !== '' ? validation.errors.roomCount : null;
 
   return (
     <>
@@ -142,6 +147,7 @@ export default function Step3Screen() {
               keyboardType="decimal-pad"
               placeholder="75"
               accessibilityLabel="Surface en m²"
+              error={surfaceError}
               containerStyle={styles.flex}
             />
             <WizardField
@@ -151,6 +157,7 @@ export default function Step3Screen() {
               keyboardType="number-pad"
               placeholder="3"
               accessibilityLabel="Nombre de pièces"
+              error={roomCountError}
               containerStyle={styles.flex}
             />
           </View>

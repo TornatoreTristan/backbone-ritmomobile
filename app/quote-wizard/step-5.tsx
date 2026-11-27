@@ -5,6 +5,7 @@ import { useQuoteWizard } from '@/contexts/quote-wizard-context';
 import type { GasState } from '@/services/quote-wizard';
 import { validateStep } from '@/services/quote-wizard-validation';
 import { useRouter } from 'expo-router';
+import { useRef } from 'react';
 
 const OPTIONS: { value: GasState; label: string }[] = [
   { value: 'oui', label: 'Oui' },
@@ -16,9 +17,19 @@ export default function Step5Screen() {
   const router = useRouter();
   const { state, update } = useQuoteWizard();
 
+  // Un double appui sur une carte empilait deux fois l'écran suivant.
+  const lastPushRef = useRef(0);
+
+  function goNext() {
+    const now = Date.now();
+    if (now - lastPushRef.current < 700) return;
+    lastPushRef.current = now;
+    router.push('/quote-wizard/step-6');
+  }
+
   function handleSelect(value: GasState) {
     update('hasGas', value);
-    router.push('/quote-wizard/step-6');
+    goNext();
   }
 
   return (
@@ -40,7 +51,7 @@ export default function Step5Screen() {
 
       <WizardFooter
         onBack={() => router.back()}
-        onNext={() => router.push('/quote-wizard/step-6')}
+        onNext={goNext}
         nextDisabled={!validateStep(5, state).valid}
       />
     </>

@@ -38,34 +38,46 @@ export default function Step2Screen() {
 
   const bdnbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bdnbAbortRef = useRef<AbortController | null>(null);
-  const lastBdnbKeyRef = useRef<string>('');
+  const bdnbKey = `${state.postalCode}|${state.address.trim()}`;
+  // Adresse pour laquelle `bdnbBuilding` a été demandé. Initialisée sur l'adresse
+  // courante si un bâtiment est déjà connu (retour sur l'écran) : pas de nouvel appel.
+  const lastBdnbKeyRef = useRef<string>(state.bdnbBuilding ? bdnbKey : '');
+
+  /**
+   * Une seule recherche BDNB à la fois : la précédente est annulée, et seule la
+   * réponse de la dernière est appliquée. Un échec vide le bâtiment plutôt que de
+   * laisser celui de l'adresse précédente préremplir les étapes suivantes.
+   */
+  async function runBdnbSearch(address: string, postalCode: string, city: string | undefined) {
+    bdnbAbortRef.current?.abort();
+    const controller = new AbortController();
+    bdnbAbortRef.current = controller;
+    try {
+      const result = await bdnbSearch({ address, postalCode, city }, staffOrgId, controller.signal);
+      if (controller.signal.aborted) return;
+      setBdnb(result);
+    } catch {
+      // BDNB non critique, silencieux
+      if (controller.signal.aborted) return;
+      setBdnb({ building: null });
+    }
+  }
 
   useEffect(() => {
     const trimmedAddress = state.address.trim();
-    const key = `${state.postalCode}|${trimmedAddress}`;
-    if (
-      !isPostalCodeValid ||
-      trimmedAddress.length < 4 ||
-      key === lastBdnbKeyRef.current
-    ) {
-      return;
-    }
+    if (bdnbKey === lastBdnbKeyRef.current) return;
 
+    // L'adresse a changé : le bâtiment connu ne lui correspond plus.
     if (bdnbDebounceRef.current) clearTimeout(bdnbDebounceRef.current);
     bdnbAbortRef.current?.abort();
+    lastBdnbKeyRef.current = '';
+    if (state.bdnbBuilding) setBdnb({ building: null });
 
-    bdnbDebounceRef.current = setTimeout(async () => {
-      lastBdnbKeyRef.current = key;
-      try {
-        const result = await bdnbSearch({
-          address: trimmedAddress,
-          postalCode: state.postalCode,
-          city: state.propertyCity.trim() || undefined,
-        }, staffOrgId);
-        setBdnb(result);
-      } catch {
-        // BDNB non critique, silencieux
-      }
+    if (!isPostalCodeValid || trimmedAddress.length < 4) return;
+
+    bdnbDebounceRef.current = setTimeout(() => {
+      lastBdnbKeyRef.current = bdnbKey;
+      runBdnbSearch(trimmedAddress, state.postalCode, state.propertyCity.trim() || undefined);
     }, 800);
 
     return () => {
@@ -115,16 +127,11 @@ export default function Step2Screen() {
     setSuggestions([]);
     setShowSuggestions(false);
 
-    try {
-      const result = await bdnbSearch({
-        address: suggestion.name,
-        postalCode: suggestion.postcode,
-        city: suggestion.city,
-      }, staffOrgId);
-      setBdnb(result);
-    } catch {
-      // BDNB non critique, silencieux
-    }
+    // Clé posée avant l'appel : l'effet sur l'adresse ne relance pas la même
+    // recherche en parallèle.
+    if (bdnbDebounceRef.current) clearTimeout(bdnbDebounceRef.current);
+    lastBdnbKeyRef.current = `${suggestion.postcode}|${suggestion.name.trim()}`;
+    await runBdnbSearch(suggestion.name, suggestion.postcode, suggestion.city);
   }
 
   return (

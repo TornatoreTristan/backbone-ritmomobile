@@ -13,9 +13,12 @@ import {
   submitQuoteWizard,
   submitStaffQuoteWizard,
 } from '@/services/quote-wizard';
-import { validateAllSteps } from '@/services/quote-wizard-validation';
+import { describeWizardError, reportWizardError } from '@/services/quote-wizard-errors';
+import { parseDecimal } from '@/services/quote-wizard-numbers';
+import { validateAllSteps, validateStaffPricing } from '@/services/quote-wizard-validation';
+import { formatRdvDateTime } from '@/services/scheduling';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Alert, Image, StyleSheet, View } from 'react-native';
 
 const priceFormatter = new Intl.NumberFormat('fr-FR', {
@@ -79,6 +82,14 @@ const YEAR_RANGE_LABELS: Record<string, string> = {
   apres_2020: 'Après 2020',
 };
 
+/** Montant saisi par le staff, formaté ; « — » si la saisie n'est pas un nombre. */
+function formatStaffPrice(raw: string): string {
+  const amount = parseDecimal(raw);
+  return amount === null ? '—' : priceFormatter.format(amount);
+}
+
+const SUBMIT_ERROR_FALLBACK = 'Une erreur est survenue. Veuillez réessayer.';
+
 function dash(value: string | null | undefined): string {
   if (value === null || value === undefined) return '—';
   const trimmed = typeof value === 'string' ? value.trim() : String(value);
@@ -118,13 +129,16 @@ function Row({ label, value }: RowProps) {
 
 export default function Step12Screen() {
   const router = useRouter();
-  const { state, update, resetAndClear } = useQuoteWizard();
+  const { state, update, resetAndClear, clearPersistedDraft } = useQuoteWizard();
   const { user } = useAuth();
   const { isStaff, currentOrganization } = useOrganization();
   const colors = useColors();
 
   const [isLoading, setIsLoading] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Verrou synchrone : `isLoading` n'est à jour qu'au rendu suivant, deux appuis
+  // rapprochés créaient deux dossiers. Il reste posé après un succès.
+  const submittingRef = useRef(false);
 
   const totals = selectQuoteTotals(state);
 
@@ -142,6 +156,7 @@ export default function Step12Screen() {
       setSubmitError("Aucune organisation sélectionnée. Impossible de créer le dossier.");
       return;
     }
+    if (submittingRef.current) return;
     setSubmitError(null);
     const overallValidation = validateAllSteps(state);
     if (!overallValidation.valid) {
@@ -150,6 +165,13 @@ export default function Step12Screen() {
       );
       return;
     }
+    if (!validateStaffPricing(state).valid) {
+      setSubmitError(
+        "Prix ou remise invalide à l'étape « Prix ». Veuillez vérifier avant de soumettre.",
+      );
+      return;
+    }
+    submittingRef.current = true;
     setIsLoading(true);
     try {
       const payload = buildSubmitPayload(
@@ -159,6 +181,9 @@ export default function Step12Screen() {
         true,
       );
       const result = await submitStaffQuoteWizard(currentOrganization.id, payload);
+      // Dossier créé : le brouillon ne doit plus pouvoir être repris, même si
+      // l'app est fermée avant l'appui sur « OK ».
+      await clearPersistedDraft().catch(() => {});
       Alert.alert(
         'Dossier créé',
         `Référence : ${result.reference}`,
@@ -175,17 +200,16 @@ export default function Step12Screen() {
         { cancelable: false },
       );
     } catch (err: unknown) {
-      let message = 'Une erreur est survenue. Veuillez réessayer.';
-      if (err instanceof Error && err.message) {
-        message = err.message;
-      }
-      setSubmitError(message);
+      submittingRef.current = false;
+      reportWizardError(err, 'step-12', 'staff-submit', submitErrorContext());
+      setSubmitError(describeWizardError(err, SUBMIT_ERROR_FALLBACK));
     } finally {
       setIsLoading(false);
     }
   }
 
   async function submitPartnerFolder(sendQuoteToClient: boolean) {
+    if (submittingRef.current) return;
     setSubmitError(null);
     const overallValidation = validateAllSteps(state);
     if (!overallValidation.valid) {
@@ -194,6 +218,7 @@ export default function Step12Screen() {
       );
       return;
     }
+    submittingRef.current = true;
     setIsLoading(true);
     try {
       const payload = buildSubmitPayload(
@@ -202,6 +227,9 @@ export default function Step12Screen() {
         sendQuoteToClient,
       );
       const result = await submitQuoteWizard(payload);
+      // Dossier créé : le brouillon ne doit plus pouvoir être repris, même si
+      // l'app est fermée avant l'appui sur « OK ».
+      await clearPersistedDraft().catch(() => {});
       const successMessage =
         sendQuoteToClient && result.quoteEmailSent
           ? `Référence : ${result.reference}\nLe devis a été envoyé au client.`
@@ -222,17 +250,27 @@ export default function Step12Screen() {
         { cancelable: false },
       );
     } catch (err: unknown) {
-      let message = 'Une erreur est survenue. Veuillez réessayer.';
-      if (err instanceof Error && err.message) {
-        message = err.message;
-      }
-      setSubmitError(message);
+      submittingRef.current = false;
+      reportWizardError(err, 'step-12', 'submit', submitErrorContext());
+      setSubmitError(describeWizardError(err, SUBMIT_ERROR_FALLBACK));
     } finally {
       setIsLoading(false);
     }
   }
 
+  // Contexte joint au rapport d'erreur : critères du bien uniquement, jamais les
+  // coordonnées du client.
+  function submitErrorContext() {
+    return {
+      projectType: state.projectType,
+      postalCode: state.postalCode,
+      propertyType: state.propertyType,
+      itemCount: totals.selected.length,
+    };
+  }
+
   function handleSubmit() {
+    if (submittingRef.current) return;
     if (isStaff) {
       submitStaffFolder();
       return;
@@ -462,13 +500,13 @@ export default function Step12Screen() {
             {state.staffFinalPriceTtc.trim() !== '' ? (
               <Row
                 label="Prix final TTC"
-                value={`${parseFloat(state.staffFinalPriceTtc).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}`}
+                value={formatStaffPrice(state.staffFinalPriceTtc)}
               />
             ) : null}
             {state.staffOriginalPriceTtc.trim() !== '' ? (
               <Row
                 label="Prix barré TTC"
-                value={`${parseFloat(state.staffOriginalPriceTtc).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}`}
+                value={formatStaffPrice(state.staffOriginalPriceTtc)}
               />
             ) : null}
             {state.staffDiscountPercent.trim() !== '' ? (
@@ -479,7 +517,7 @@ export default function Step12Screen() {
 
         {isStaff && state.staffRdvDate ? (
           <Section title="Rendez-vous planifié" colors={colors}>
-            <Row label="Date" value={state.staffRdvDate} />
+            <Row label="Date" value={formatRdvDateTime(state.staffRdvDate) ?? state.staffRdvDate} />
             {state.staffRdvDurationMinutes.trim() !== '' ? (
               <Row label="Durée" value={`${state.staffRdvDurationMinutes.trim()} min`} />
             ) : null}

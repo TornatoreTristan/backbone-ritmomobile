@@ -6,21 +6,20 @@ import { Separator } from '@/components/ui/separator';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { centeredContent } from '@/constants/layout';
+import { INTERVENTION_STATUS_LABELS, INTERVENTION_STATUS_TONE } from '@/constants/status-maps';
+import { useScreenResource } from '@/hooks/use-screen-resource';
 import { useColors } from '@/hooks/use-theme-color';
 import {
-  INTERVENTION_STATUS_LABELS,
-  INTERVENTION_STATUS_TONE,
   PROPERTY_KIND_LABELS,
   type Contact,
   type Intervention,
   type PropertyDetails,
   getIntervention,
 } from '@/services/technician';
+import { openExternalUrl, telUrl } from '@/services/open-link';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -70,7 +69,7 @@ function getInitials(name: string): string {
 
 function callPhone(phone: string | null) {
   if (!phone) return;
-  Linking.openURL(`tel:${phone.replace(/\s/g, '')}`);
+  openExternalUrl(telUrl(phone));
 }
 
 function openMaps(address: string) {
@@ -80,38 +79,21 @@ function openMaps(address: string) {
     android: `geo:0,0?q=${query}`,
     default: `https://www.google.com/maps/search/?api=1&query=${query}`,
   });
-  if (url) Linking.openURL(url);
+  if (url) openExternalUrl(url);
 }
 
 export default function InterventionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const colors = useColors();
-  const [intervention, setIntervention] = useState<Intervention | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!id) return;
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = await getIntervention(id);
-      if (!data) {
-        setError('Intervention introuvable.');
-      } else {
-        setIntervention(data);
-      }
-    } catch {
-      setError('Impossible de charger l’intervention.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [id]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Clé = id : en passant d'une intervention à une autre, la précédente n'est
+  // plus affichée et sa réponse tardive est ignorée. `getIntervention` renvoie
+  // `null` pour un 403/404.
+  const { data, isLoading, error, reload } = useScreenResource(
+    id || null,
+    (interventionId) => getIntervention(interventionId),
+    'Impossible de charger l’intervention.',
+  );
 
   return (
     <ThemedView style={styles.container}>
@@ -126,6 +108,17 @@ export default function InterventionDetailScreen() {
             <ThemedText tone="destructive" style={styles.errorText}>
               {error}
             </ThemedText>
+            <Button variant="outline" size="sm" onPress={reload} style={{ marginTop: 12 }}>
+              Réessayer
+            </Button>
+          </View>
+        ) : data ? (
+          <InterventionDetail intervention={data} />
+        ) : (
+          <View style={styles.center}>
+            <ThemedText tone="destructive" style={styles.errorText}>
+              Intervention introuvable.
+            </ThemedText>
             <Button
               variant="outline"
               size="sm"
@@ -134,9 +127,7 @@ export default function InterventionDetailScreen() {
               Retour
             </Button>
           </View>
-        ) : intervention ? (
-          <InterventionDetail intervention={intervention} />
-        ) : null}
+        )}
       </SafeAreaView>
     </ThemedView>
   );
@@ -146,7 +137,7 @@ function InterventionDetail({ intervention }: { intervention: Intervention }) {
   const date = new Date(intervention.scheduledAt);
   // Sur le terrain, le technicien appelle d'abord le contact présent à l'adresse ;
   // à défaut, le propriétaire.
-  const primaryPhone = intervention.onSiteContact?.phone ?? intervention.owner.phone;
+  const primaryPhone = intervention.onSiteContact?.phone ?? intervention.owner?.phone ?? null;
 
   return (
     <ScrollView contentContainerStyle={[styles.scrollContent, centeredContent]}>
@@ -176,7 +167,9 @@ function InterventionDetail({ intervention }: { intervention: Intervention }) {
         </SectionCard>
       )}
 
-      <ContactCard label="PROPRIÉTAIRE" contact={intervention.owner} />
+      {intervention.owner ? (
+        <ContactCard label="PROPRIÉTAIRE" contact={intervention.owner} />
+      ) : null}
 
       {/* Caractéristiques du bien */}
       <SectionCard label="CARACTÉRISTIQUES DU BIEN">
@@ -277,7 +270,12 @@ function AccessCard({ conditions }: { conditions: string }) {
   return (
     <Card style={[styles.accessCard, { backgroundColor: colors.surfaceOverlay, borderColor: colors.primary }]}>
       <View style={styles.accessHeader}>
-        <ThemedText style={styles.accessIcon}>🔑</ThemedText>
+        <ThemedText
+          style={styles.accessIcon}
+          accessibilityElementsHidden
+          importantForAccessibility="no">
+          🔑
+        </ThemedText>
         <ThemedText type="label" tone="primary" style={styles.cardLabel}>
           CONDITIONS D’ACCÈS
         </ThemedText>

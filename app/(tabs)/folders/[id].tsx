@@ -1,10 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Badge, type BadgeTone } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { StaleDataNotice } from '@/components/stale-data-notice';
 import { API_URL } from '@/constants/api';
 import { Radius } from '@/constants/theme';
 import { useColors } from '@/hooks/use-theme-color';
@@ -12,6 +13,18 @@ import { useOrganization } from '@/contexts/organization-context';
 import { FolderDock, type DockKey } from '@/components/folder-dock';
 import { ApiError } from '@/services/api';
 import { centeredContent } from '@/constants/layout';
+import {
+  FOLDER_STATUS_LABELS,
+  FOLDER_STATUS_TONE,
+  INTERVENTION_STATUS_LABELS,
+  INTERVENTION_STATUS_TONE,
+  INVOICE_STATUS_LABELS,
+  INVOICE_STATUS_TONE,
+  QUOTE_STATUS_LABELS,
+  QUOTE_STATUS_TONE,
+} from '@/constants/status-maps';
+import { useScreenResource } from '@/hooks/use-screen-resource';
+import { openDocumentUrl, openExternalUrl, telUrl } from '@/services/open-link';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   type FolderCategory,
@@ -22,10 +35,6 @@ import {
   type FolderInvoiceSummary,
   type FolderQuoteSummary,
   type FolderReport,
-  type FolderStatus,
-  type InterventionStatus,
-  type InvoiceStatus,
-  type QuoteStatus,
   getFolderById,
   getFolderFiles,
   getFolderReports,
@@ -33,35 +42,20 @@ import {
 } from '@/services/folders';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import * as WebBrowser from 'expo-web-browser';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useState } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
   Alert,
   Image,
-  Linking,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   View,
 } from 'react-native';
-
-const STATUS_TONE: Record<FolderStatus, BadgeTone> = {
-  draft: 'muted',
-  lead: 'info',
-  deal: 'success',
-  archived: 'secondary',
-};
-
-const STATUS_LABELS: Record<FolderStatus, string> = {
-  draft: 'Brouillon',
-  lead: 'Prospect',
-  deal: 'Conclu',
-  archived: 'Archivé',
-};
 
 const CATEGORY_LABELS: Record<FolderCategory, string> = {
   document: 'Document',
@@ -81,68 +75,6 @@ const CATEGORY_ICONS: Record<FolderCategory, string> = {
   quote: 'DEV',
   contract: 'CTR',
   other: 'FIL',
-};
-
-const QUOTE_STATUS_TONE: Record<QuoteStatus, BadgeTone> = {
-  draft: 'muted',
-  pending: 'info',
-  sent: 'info',
-  accepted: 'success',
-  rejected: 'destructive',
-  expired: 'secondary',
-  converted: 'success',
-  canceled: 'muted',
-};
-
-const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
-  draft: 'Brouillon',
-  pending: 'En attente',
-  sent: 'Envoyé',
-  accepted: 'Accepté',
-  rejected: 'Refusé',
-  expired: 'Expiré',
-  converted: 'Converti',
-  canceled: 'Annulé',
-};
-
-const INVOICE_STATUS_TONE: Record<InvoiceStatus, BadgeTone> = {
-  draft: 'muted',
-  pending: 'info',
-  sent: 'info',
-  paid: 'success',
-  partially_paid: 'warning',
-  overdue: 'destructive',
-  cancelled: 'muted',
-  refunded: 'secondary',
-};
-
-const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
-  draft: 'Brouillon',
-  pending: 'En attente',
-  sent: 'Envoyée',
-  paid: 'Payée',
-  partially_paid: 'Partiellement payée',
-  overdue: 'En retard',
-  cancelled: 'Annulée',
-  refunded: 'Remboursée',
-};
-
-const INTERVENTION_STATUS_TONE: Record<InterventionStatus, BadgeTone> = {
-  scheduled: 'info',
-  confirmed: 'info',
-  in_progress: 'warning',
-  completed: 'success',
-  cancelled: 'destructive',
-  rescheduled: 'warning',
-};
-
-const INTERVENTION_STATUS_LABELS: Record<InterventionStatus, string> = {
-  scheduled: 'Planifiée',
-  confirmed: 'Confirmée',
-  in_progress: 'En cours',
-  completed: 'Terminée',
-  cancelled: 'Annulée',
-  rescheduled: 'Reprogrammée',
 };
 
 const dateFormatter = new Intl.DateTimeFormat('fr-FR', {
@@ -166,11 +98,25 @@ function formatDateTime(iso: string | null): string | null {
   return dateTimeFormatter.format(date);
 }
 
+/**
+ * Une date seule (`YYYY-MM-DD`, ex. date d'émission) est lue comme minuit UTC par
+ * `new Date` : à l'ouest de Greenwich le jour affiché serait la veille. On la
+ * construit donc en heure locale.
+ */
 function formatDate(iso: string | null): string | null {
   if (!iso) return null;
-  const date = new Date(iso);
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const date = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(iso);
   if (isNaN(date.getTime())) return null;
   return dateFormatter.format(date);
+}
+
+/** Montant en centimes entiers : évite les restes du type 1e-14 en flottant. */
+function toCents(value: number | string | null | undefined): number {
+  const num = Number(value ?? 0);
+  return Number.isFinite(num) ? Math.round(num * 100) : 0;
 }
 
 function formatAmount(value: number): string {
@@ -289,7 +235,16 @@ type PickedFile = {
   uri: string;
   name: string;
   mimeType: string;
+  /** Taille en octets, quand le sélecteur la fournit. */
+  size: number | null;
 };
+
+type PickSource = 'document' | 'gallery' | 'camera';
+
+/** Au-delà, l'envoi a peu de chances d'aboutir sur réseau mobile. */
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+const SETTINGS_HINT = "dans les réglages de votre appareil";
 
 async function pickDocument(): Promise<PickedFile | null> {
   const result = await DocumentPicker.getDocumentAsync({
@@ -302,6 +257,16 @@ async function pickDocument(): Promise<PickedFile | null> {
     uri: asset.uri,
     name: asset.name,
     mimeType: asset.mimeType ?? 'application/octet-stream',
+    size: asset.size ?? null,
+  };
+}
+
+function fromImageAsset(asset: ImagePicker.ImagePickerAsset): PickedFile {
+  return {
+    uri: asset.uri,
+    name: asset.fileName ?? `photo-${Date.now()}.jpg`,
+    mimeType: asset.mimeType ?? 'image/jpeg',
+    size: asset.fileSize ?? null,
   };
 }
 
@@ -310,7 +275,7 @@ async function pickFromGallery(): Promise<PickedFile | null> {
   if (status !== 'granted') {
     Alert.alert(
       'Permission refusée',
-      "Autorisez l'accès à la galerie dans les réglages de votre iPhone pour joindre des photos.",
+      `Autorisez l'accès à la galerie ${SETTINGS_HINT} pour joindre des photos.`,
     );
     return null;
   }
@@ -320,10 +285,7 @@ async function pickFromGallery(): Promise<PickedFile | null> {
     allowsMultipleSelection: false,
   });
   if (result.canceled) return null;
-  const asset = result.assets[0];
-  const filename = asset.fileName ?? `photo-${Date.now()}.jpg`;
-  const mimeType = asset.mimeType ?? 'image/jpeg';
-  return { uri: asset.uri, name: filename, mimeType };
+  return fromImageAsset(result.assets[0]);
 }
 
 async function pickFromCamera(): Promise<PickedFile | null> {
@@ -331,7 +293,7 @@ async function pickFromCamera(): Promise<PickedFile | null> {
   if (status !== 'granted') {
     Alert.alert(
       'Permission refusée',
-      "Autorisez l'accès à l'appareil photo dans les réglages de votre iPhone pour prendre des photos.",
+      `Autorisez l'accès à l'appareil photo ${SETTINGS_HINT} pour prendre des photos.`,
     );
     return null;
   }
@@ -339,17 +301,41 @@ async function pickFromCamera(): Promise<PickedFile | null> {
     quality: 0.85,
   });
   if (result.canceled) return null;
-  const asset = result.assets[0];
-  const filename = asset.fileName ?? `photo-${Date.now()}.jpg`;
-  const mimeType = asset.mimeType ?? 'image/jpeg';
-  return { uri: asset.uri, name: filename, mimeType };
+  return fromImageAsset(result.assets[0]);
 }
+
+const PICKERS: Record<PickSource, () => Promise<PickedFile | null>> = {
+  document: pickDocument,
+  gallery: pickFromGallery,
+  camera: pickFromCamera,
+};
 
 type ScreenData = {
   folder: FolderDetail;
   files: FolderFile[];
   reports: FolderReport[];
+  /** Les rapports n'ont pas pu être chargés : à ne pas confondre avec « aucun rapport ». */
+  reportsFailed: boolean;
 };
+
+async function fetchScreenData(id: string): Promise<ScreenData> {
+  const [folder, files, reports] = await Promise.all([
+    getFolderById(id),
+    getFolderFiles(id),
+    // Les rapports sont secondaires : un échec (ou backend non déployé) ne
+    // doit pas bloquer l'affichage du dossier.
+    getFolderReports(id).catch(() => null),
+  ]);
+  return { folder, files, reports: reports ?? [], reportsFailed: reports === null };
+}
+
+function describeLoadError(err: unknown): string {
+  if (err instanceof ApiError && err.status === 403) {
+    return "Accès refusé. Vous n'êtes pas autorisé à consulter ce dossier.";
+  }
+  if (err instanceof ApiError && err.status === 404) return 'Dossier introuvable.';
+  return 'Impossible de charger le dossier. Veuillez réessayer.';
+}
 
 export default function FolderDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -357,125 +343,79 @@ export default function FolderDetailScreen() {
   const router = useRouter();
   const { isStaff } = useOrganization();
 
-  const [data, setData] = useState<ScreenData | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
+  // Clé = id du dossier. L'écran reste monté d'un dossier à l'autre (il vit dans
+  // les Tabs) : la fiche précédente n'est jamais affichée sous le nouvel id, et
+  // une réponse tardive (chargement, rafraîchissement, fin d'envoi de fichier)
+  // pour un autre dossier est ignorée. Dossier, fichiers et rapports sont
+  // rechargés silencieusement à chaque retour sur l'écran.
+  const { data, isLoading, isRefreshing, error, refreshFailed, reload, refresh } =
+    useScreenResource(id || null, fetchScreenData, describeLoadError);
+  // L'envoi en cours est rattaché à son dossier : en ouvrant un autre dossier
+  // pendant l'envoi, le bouton « Ajouter un fichier » de celui-ci reste libre.
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const isUploading = uploadingId === id;
 
-  useEffect(() => {
-    async function load() {
-      setIsLoading(true);
-      setErrorMessage(null);
-      try {
-        const [folder, files, reports] = await Promise.all([
-          getFolderById(id),
-          getFolderFiles(id),
-          // Les rapports sont secondaires : un échec (ou backend non déployé) ne
-          // doit pas bloquer l'affichage du dossier.
-          getFolderReports(id).catch(() => [] as FolderReport[]),
-        ]);
-        setData({ folder, files, reports });
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 403) {
-          setErrorMessage("Accès refusé. Vous n'êtes pas autorisé à consulter ce dossier.");
-        } else if (err instanceof ApiError && err.status === 404) {
-          setErrorMessage('Dossier introuvable.');
-        } else {
-          setErrorMessage('Impossible de charger le dossier. Veuillez réessayer.');
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    load();
-  }, [id]);
-
-  // Au retour sur l'écran (ex: après l'écran de modification), on rafraîchit
-  // silencieusement le dossier sans réafficher le chargement plein écran.
-  const hasFocusedOnce = useRef(false);
-  useFocusEffect(
-    useCallback(() => {
-      if (!hasFocusedOnce.current) {
-        hasFocusedOnce.current = true;
-        return;
-      }
-      getFolderById(id)
-        .then((folder) => setData((prev) => (prev ? { ...prev, folder } : prev)))
-        .catch(() => {
-          // échec silencieux — la version affichée reste valable
-        });
-    }, [id]),
-  );
-
-  const reloadFiles = useCallback(async () => {
+  async function pickAndUpload(source: PickSource) {
+    if (isUploading) return;
+    let picked: PickedFile | null;
     try {
-      const files = await getFolderFiles(id);
-      setData((prev) => (prev ? { ...prev, files } : prev));
+      picked = await PICKERS[source]();
     } catch {
-      // échec silencieux — la liste existante reste affichée
+      Alert.alert(
+        'Sélection impossible',
+        source === 'camera'
+          ? "L'appareil photo n'est pas disponible sur cet appareil."
+          : "Le fichier n'a pas pu être sélectionné. Réessayez.",
+      );
+      return;
     }
-  }, [id]);
+    if (!picked) return;
+    if (picked.size !== null && picked.size > MAX_UPLOAD_BYTES) {
+      Alert.alert(
+        'Fichier trop volumineux',
+        `Ce fichier pèse ${formatBytes(picked.size)}. La taille maximale est de ${formatBytes(MAX_UPLOAD_BYTES)}.`,
+      );
+      return;
+    }
 
-  const handleUpload = useCallback(
-    async (picked: PickedFile) => {
-      setIsUploading(true);
-      try {
-        const category = categoryFromMime(picked.mimeType);
-        await uploadFolderFile(id, picked, category);
-        await reloadFiles();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Une erreur est survenue.';
-        Alert.alert("Erreur lors de l'upload", message);
-      } finally {
-        setIsUploading(false);
-      }
-    },
-    [id, reloadFiles],
-  );
+    setUploadingId(id);
+    const clearUploading = () => setUploadingId((current) => (current === id ? null : current));
+    try {
+      await uploadFolderFile(id, picked, categoryFromMime(picked.mimeType));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Une erreur est survenue.';
+      Alert.alert('Envoi impossible', message);
+      clearUploading();
+      return;
+    }
+    clearUploading();
+    // Si ce rechargement échoue, le bandeau « Actualisation impossible » s'affiche :
+    // l'utilisateur sait que le fichier est envoyé mais que la liste n'est pas à jour.
+    await reload();
+  }
 
-  const openFilePicker = useCallback(() => {
+  function openFilePicker() {
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           options: ['Annuler', 'Document', 'Photo de la galerie', 'Prendre une photo'],
           cancelButtonIndex: 0,
         },
-        async (buttonIndex) => {
-          let picked: PickedFile | null = null;
-          if (buttonIndex === 1) picked = await pickDocument();
-          else if (buttonIndex === 2) picked = await pickFromGallery();
-          else if (buttonIndex === 3) picked = await pickFromCamera();
-          if (picked) await handleUpload(picked);
+        (buttonIndex) => {
+          if (buttonIndex === 1) pickAndUpload('document');
+          else if (buttonIndex === 2) pickAndUpload('gallery');
+          else if (buttonIndex === 3) pickAndUpload('camera');
         },
       );
     } else {
       Alert.alert('Ajouter un fichier', 'Choisissez une source', [
         { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Document',
-          onPress: async () => {
-            const picked = await pickDocument();
-            if (picked) await handleUpload(picked);
-          },
-        },
-        {
-          text: 'Photo de la galerie',
-          onPress: async () => {
-            const picked = await pickFromGallery();
-            if (picked) await handleUpload(picked);
-          },
-        },
-        {
-          text: 'Prendre une photo',
-          onPress: async () => {
-            const picked = await pickFromCamera();
-            if (picked) await handleUpload(picked);
-          },
-        },
+        { text: 'Document', onPress: () => pickAndUpload('document') },
+        { text: 'Photo de la galerie', onPress: () => pickAndUpload('gallery') },
+        { text: 'Prendre une photo', onPress: () => pickAndUpload('camera') },
       ]);
     }
-  }, [handleUpload]);
+  }
 
   if (isLoading) {
     return (
@@ -490,15 +430,20 @@ export default function FolderDetailScreen() {
     );
   }
 
-  if (errorMessage || !data) {
+  if (error || !data) {
     return (
       <ThemedView style={styles.container}>
         <SafeAreaView style={styles.safeArea} edges={['top']}>
           <BackBar onBack={() => router.back()} />
           <View style={styles.center}>
             <ThemedText tone="destructive" style={styles.errorText}>
-              {errorMessage ?? 'Une erreur est survenue.'}
+              {error ?? 'Dossier introuvable.'}
             </ThemedText>
+            {error ? (
+              <Button size="sm" onPress={reload} style={{ marginTop: 12 }}>
+                Réessayer
+              </Button>
+            ) : null}
             <Button variant="outline" size="sm" onPress={() => router.back()} style={{ marginTop: 12 }}>
               Retour
             </Button>
@@ -508,15 +453,15 @@ export default function FolderDetailScreen() {
     );
   }
 
-  const { folder, files, reports } = data;
+  const { folder, files, reports, reportsFailed } = data;
   // `canEdit` vient du backend (staff de l'org du dossier). Absent = backend antérieur
   // sans PATCH /api/v1/folders/:id → pas de bouton.
   const canEdit = folder.canEdit === true;
   const priceHt = formatPrice(folder.finalPriceHt);
   const priceTtc = formatPrice(folder.finalPriceTtc);
-  const discountTtc = folder.discountAmountTtc ?? 0;
-  const discountPercent = folder.discountPercent ?? 0;
-  const hasDiscount = discountTtc > 0 || discountPercent > 0;
+  const discountCents = toCents(folder.discountAmountTtc);
+  const discountPercent = Number(folder.discountPercent ?? 0);
+  const hasDiscount = discountCents > 0 || discountPercent > 0;
 
   return (
     <ThemedView style={styles.container}>
@@ -535,7 +480,16 @@ export default function FolderDetailScreen() {
             centeredContent,
             isStaff && styles.scrollContentStaff,
           ]}
-          showsVerticalScrollIndicator={false}>
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={refresh}
+              tintColor={colors.foreground}
+            />
+          }>
+        <StaleDataNotice visible={refreshFailed} />
+
         <FolderHeader folder={folder} />
 
         <ProgressTimeline folder={folder} reports={reports} />
@@ -553,11 +507,15 @@ export default function FolderDetailScreen() {
 
         {priceHt || priceTtc || hasDiscount ? (
           <Section title="Montants">
-            {hasDiscount && folder.originalPriceTtc ? (
-              <InfoRow label="Prix initial TTC" value={formatAmount(folder.originalPriceTtc)} muted />
+            {hasDiscount && folder.originalPriceTtc != null ? (
+              <InfoRow
+                label="Prix initial TTC"
+                value={formatAmount(Number(folder.originalPriceTtc))}
+                muted
+              />
             ) : null}
             {hasDiscount ? (
-              <DiscountRow amountTtc={discountTtc} percent={folder.discountPercent} />
+              <DiscountRow amountCents={discountCents} percent={discountPercent} />
             ) : null}
             {priceHt ? <InfoRow label="Prix HT" value={priceHt} /> : null}
             {priceTtc ? <InfoRow label="Prix TTC" value={priceTtc} /> : null}
@@ -628,7 +586,11 @@ export default function FolderDetailScreen() {
         </Section>
 
         <Section title="Rapports">
-          {reports.length === 0 ? (
+          {reportsFailed ? (
+            <ThemedText type="muted" style={styles.emptyFiles}>
+              Rapports indisponibles pour le moment. Tirez vers le bas pour réessayer.
+            </ThemedText>
+          ) : reports.length === 0 ? (
             <ThemedText type="muted" style={styles.emptyFiles}>
               Aucun rapport
             </ThemedText>
@@ -693,7 +655,9 @@ function FolderHeader({ folder }: { folder: FolderDetail }) {
         <ThemedText type="label" tone="primary" style={styles.headerReference}>
           DOSSIER {folder.reference}
         </ThemedText>
-        <Badge tone={STATUS_TONE[folder.status]}>{STATUS_LABELS[folder.status]}</Badge>
+        <Badge tone={FOLDER_STATUS_TONE[folder.status]}>
+          {FOLDER_STATUS_LABELS[folder.status]}
+        </Badge>
       </View>
       <ThemedText type="title" style={styles.headerTitle}>
         {folder.clientName}
@@ -806,7 +770,11 @@ interface SectionProps {
 function Section({ title, children }: SectionProps) {
   return (
     <Card style={styles.section}>
-      <ThemedText type="label" tone="primary" style={styles.sectionTitle}>
+      <ThemedText
+        type="label"
+        tone="primary"
+        style={styles.sectionTitle}
+        accessibilityRole="header">
         {title.toUpperCase()}
       </ThemedText>
       {children}
@@ -825,17 +793,19 @@ function InfoRow({ label, value, muted }: { label: string; value: string; muted?
   );
 }
 
-function DiscountRow({ amountTtc, percent }: { amountTtc: number; percent: number | null }) {
+function DiscountRow({ amountCents, percent }: { amountCents: number; percent: number }) {
   const colors = useColors();
-  const suffix = percent && percent > 0 ? ` (−${formatPercent(percent)})` : '';
+  const hasAmount = amountCents > 0;
+  const percentLabel = percent > 0 ? `−${formatPercent(percent)}` : null;
+  // Sans montant connu, on affiche le pourcentage plutôt qu'un « −0,00 € » trompeur.
+  const label = hasAmount && percentLabel ? `Remise partenaire (${percentLabel})` : 'Remise partenaire';
+  const value = hasAmount ? `−${formatAmount(amountCents / 100)}` : (percentLabel ?? '');
   return (
     <View style={styles.row}>
       <ThemedText type="muted" style={{ color: colors.primary }}>
-        {`Remise partenaire${suffix}`}
+        {label}
       </ThemedText>
-      <ThemedText style={[styles.infoValue, { color: colors.primary }]}>
-        {`−${formatAmount(amountTtc)}`}
-      </ThemedText>
+      <ThemedText style={[styles.infoValue, { color: colors.primary }]}>{value}</ThemedText>
     </View>
   );
 }
@@ -846,6 +816,9 @@ function AddFileButton({ onPress, isUploading }: { onPress: () => void; isUpload
     <Pressable
       onPress={onPress}
       disabled={isUploading}
+      accessibilityRole="button"
+      accessibilityLabel={isUploading ? 'Envoi du fichier en cours' : 'Ajouter un fichier'}
+      accessibilityState={{ disabled: isUploading, busy: isUploading }}
       style={({ pressed }) => [
         styles.addFile,
         { borderColor: colors.border },
@@ -854,7 +827,7 @@ function AddFileButton({ onPress, isUploading }: { onPress: () => void; isUpload
       {isUploading ? (
         <>
           <ActivityIndicator size="small" color={colors.mutedForeground} />
-          <ThemedText type="muted">Upload en cours...</ThemedText>
+          <ThemedText type="muted">Envoi en cours…</ThemedText>
         </>
       ) : (
         <ThemedText type="muted" style={{ fontWeight: '500' }}>
@@ -933,7 +906,7 @@ function QuoteRow({ quote }: { quote: FolderQuoteSummary }) {
 
   function handleOpen() {
     if (quote.publicToken) {
-      Linking.openURL(`${API_URL}/quote/${quote.publicToken}`);
+      openExternalUrl(`${API_URL}/quote/${quote.publicToken}`);
     }
   }
 
@@ -980,19 +953,25 @@ function QuoteRow({ quote }: { quote: FolderQuoteSummary }) {
 function RowChevron() {
   const colors = useColors();
   return (
-    <ThemedText style={[styles.chevron, { color: colors.mutedForeground }]}>›</ThemedText>
+    <ThemedText
+      style={[styles.chevron, { color: colors.mutedForeground }]}
+      accessibilityElementsHidden
+      importantForAccessibility="no">
+      ›
+    </ThemedText>
   );
 }
 
 function InvoiceRow({ invoice }: { invoice: FolderInvoiceSummary }) {
   const colors = useColors();
   const date = formatDate(invoice.issueDate);
-  const remaining = invoice.amountTtc - invoice.amountPaid;
+  const paidCents = toCents(invoice.amountPaid);
+  const remainingCents = toCents(invoice.amountTtc) - paidCents;
   const canOpen = invoice.url !== null;
 
   return (
     <Pressable
-      onPress={canOpen ? () => WebBrowser.openBrowserAsync(invoice.url!) : undefined}
+      onPress={canOpen ? () => openDocumentUrl(invoice.url!) : undefined}
       disabled={!canOpen}
       accessibilityRole={canOpen ? 'button' : undefined}
       accessibilityLabel={canOpen ? `Ouvrir la facture ${invoice.reference}` : undefined}
@@ -1014,8 +993,8 @@ function InvoiceRow({ invoice }: { invoice: FolderInvoiceSummary }) {
         <View style={styles.docBottomRow}>
           <ThemedText type="caption" tone="mutedForeground">
             {date ?? '—'}
-            {invoice.amountPaid > 0 && remaining > 0
-              ? ` · Reste ${formatAmount(remaining)}`
+            {paidCents > 0 && remainingCents > 0
+              ? ` · Reste ${formatAmount(remainingCents / 100)}`
               : ''}
           </ThemedText>
           <ThemedText type="defaultSemiBold" style={{ color: colors.foreground }}>
@@ -1090,7 +1069,7 @@ function TechnicianBlock({ intervention }: { intervention: FolderInterventionSum
         </ThemedText>
         {email ? (
           <Pressable
-            onPress={() => Linking.openURL(`mailto:${email}`)}
+            onPress={() => openExternalUrl(`mailto:${email}`)}
             hitSlop={6}
             accessibilityRole="link"
             accessibilityLabel={`Envoyer un email à ${name}`}>
@@ -1108,7 +1087,7 @@ function TechnicianBlock({ intervention }: { intervention: FolderInterventionSum
       {phone ? (
         <Button
           size="sm"
-          onPress={() => Linking.openURL(`tel:${phone}`)}
+          onPress={() => openExternalUrl(telUrl(phone))}
           accessibilityLabel={`Appeler ${name}`}
           style={styles.techCallButton}>
           Appeler
@@ -1134,7 +1113,7 @@ function ReportRow({ report }: { report: FolderReport }) {
 
   return (
     <Pressable
-      onPress={() => WebBrowser.openBrowserAsync(report.url)}
+      onPress={() => openDocumentUrl(report.url)}
       accessibilityRole="button"
       accessibilityLabel={`Ouvrir le rapport ${report.filename}`}
       style={({ pressed }) => [
@@ -1161,7 +1140,7 @@ function FileRow({ file }: { file: FolderFile }) {
   const colors = useColors();
   return (
     <Pressable
-      onPress={() => WebBrowser.openBrowserAsync(file.url)}
+      onPress={() => openDocumentUrl(file.url)}
       style={({ pressed }) => [
         styles.fileRow,
         pressed && { backgroundColor: colors.surfaceOverlay },

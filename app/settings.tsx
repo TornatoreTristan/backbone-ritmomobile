@@ -5,7 +5,8 @@ import { useAuth } from '@/contexts/auth-context';
 import { useOrganization } from '@/contexts/organization-context';
 import { useColors } from '@/hooks/use-theme-color';
 import { useRouter } from 'expo-router';
-import { Image, Pressable, StyleSheet, Switch, View } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, Image, Pressable, StyleSheet, Switch, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 function getInitials(fullName: string | null | undefined): string {
@@ -21,7 +22,11 @@ export default function SettingsModal() {
   const router = useRouter();
   const { roleOverride, setRoleOverride } = useOrganization();
 
+  const [isSigningOut, setIsSigningOut] = useState(false);
+
   async function handleSignOut() {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
     await signOut();
     router.dismissAll();
   }
@@ -116,16 +121,22 @@ export default function SettingsModal() {
         <View style={styles.actions}>
           <Pressable
             onPress={handleSignOut}
+            disabled={isSigningOut}
             accessibilityRole="button"
+            accessibilityState={{ disabled: isSigningOut, busy: isSigningOut }}
             accessibilityLabel="Se déconnecter"
             style={({ pressed }) => [
               styles.action,
               { borderColor: colors.border, backgroundColor: colors.card },
               pressed && styles.actionPressed,
             ]}>
-            <ThemedText type="defaultSemiBold" tone="destructive">
-              Se déconnecter
-            </ThemedText>
+            {isSigningOut ? (
+              <ActivityIndicator color={colors.destructive} />
+            ) : (
+              <ThemedText type="defaultSemiBold" tone="destructive">
+                Se déconnecter
+              </ThemedText>
+            )}
           </Pressable>
 
           <Pressable

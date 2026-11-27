@@ -58,7 +58,7 @@ export function interventionMatchesQuery(
   if (!normalizedQuery) return true;
   return (
     normalizeForSearch(intervention.folderReference).includes(normalizedQuery) ||
-    normalizeForSearch(intervention.owner.name).includes(normalizedQuery) ||
+    normalizeForSearch(intervention.owner?.name).includes(normalizedQuery) ||
     normalizeForSearch(intervention.propertyAddress).includes(normalizedQuery) ||
     normalizeForSearch(intervention.prestation).includes(normalizedQuery)
   );
@@ -144,27 +144,6 @@ export async function getIntervention(id: string): Promise<Intervention | null> 
     throw err;
   }
 }
-
-export const INTERVENTION_STATUS_LABELS: Record<InterventionStatus, string> = {
-  scheduled: 'Planifiée',
-  confirmed: 'Confirmée',
-  in_progress: 'En cours',
-  completed: 'Terminée',
-  cancelled: 'Annulée',
-  rescheduled: 'Reportée',
-};
-
-export const INTERVENTION_STATUS_TONE: Record<
-  InterventionStatus,
-  'info' | 'warning' | 'success' | 'muted'
-> = {
-  scheduled: 'info',
-  confirmed: 'info',
-  in_progress: 'warning',
-  completed: 'success',
-  cancelled: 'muted',
-  rescheduled: 'warning',
-};
 
 export const PROPERTY_KIND_LABELS: Record<PropertyKind, string> = {
   house: 'Maison',

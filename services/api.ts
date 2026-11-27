@@ -14,11 +14,36 @@ export class ApiError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+// Une photo ou un PDF de plusieurs Mo en 4G dépasse largement 30 s.
+const UPLOAD_TIMEOUT_MS = 120_000;
+
+/** Message affichable quand le serveur ne fournit pas de texte exploitable. */
+function fallbackMessage(status: number): string {
+  if (status === 401) return 'Votre session a expiré. Reconnectez-vous.';
+  if (status === 403) return "Vous n'êtes pas autorisé à effectuer cette action.";
+  if (status === 404) return 'Élément introuvable.';
+  if (status === 422) return 'Certaines informations sont invalides.';
+  if (status === 429) return 'Trop de requêtes. Réessayez dans un instant.';
+  if (status >= 500) return 'Le serveur rencontre un problème. Réessayez dans un instant.';
+  return `Une erreur est survenue (${status}).`;
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim() !== '') return value;
+  }
+  return null;
+}
 
 let onUnauthorized: (() => void) | null = null;
 
 export function setOnUnauthorized(cb: (() => void) | null): void {
   onUnauthorized = cb;
+}
+
+/** Pour les appels qui ne passent pas par `apiRequest` (flux SSE de Mobot). */
+export function notifyUnauthorized(): void {
+  onUnauthorized?.();
 }
 
 type RequestOptions = {
@@ -69,12 +94,14 @@ async function parseResponse<T>(response: Response, authenticated: boolean): Pro
     if (response.status === 401 && authenticated) {
       onUnauthorized?.();
     }
+    // `error` peut être un objet (erreurs de validation VineJS) : on ne retient
+    // que des chaînes, sinon le message deviendrait « [object Object] ».
     const payload =
       data && typeof data === 'object'
-        ? (data as { error?: string; message?: string })
+        ? (data as { error?: unknown; message?: unknown })
         : null;
     const message =
-      payload?.error ?? payload?.message ?? `API error: ${response.status}`;
+      firstString(payload?.error, payload?.message) ?? fallbackMessage(response.status);
     throw new ApiError(response.status, message, data);
   }
   return data as T;
@@ -121,7 +148,8 @@ async function performFetch<T>(
       throw new ApiError(0, 'Délai de connexion dépassé', null);
     }
     if (err instanceof ApiError) throw err;
-    throw new ApiError(0, err instanceof Error ? err.message : 'Erreur réseau', null);
+    // Le message natif de fetch est en anglais (« Network request failed »).
+    throw new ApiError(0, 'Connexion impossible. Vérifiez votre réseau et réessayez.', null);
   } finally {
     clear();
   }
@@ -157,7 +185,7 @@ export async function apiUpload<T>(
   formData: FormData,
   options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<T> {
-  const { signal, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+  const { signal, timeoutMs = UPLOAD_TIMEOUT_MS } = options;
   const headers = await buildHeaders(true, false);
   return performFetch<T>(
     endpoint,

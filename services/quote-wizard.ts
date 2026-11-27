@@ -1,5 +1,6 @@
 import { apiRequest } from '@/services/api';
 import type { WizardState } from '@/contexts/quote-wizard-context';
+import { parseDecimal, parseInteger } from '@/services/quote-wizard-numbers';
 
 export type ProjectType =
   | 'vente'
@@ -200,11 +201,15 @@ type BdnbSearchResponse = {
   data: BdnbSearchResult;
 };
 
-export async function bdnbSearch(payload: BdnbSearchPayload, orgId?: string): Promise<BdnbSearchResult> {
+export async function bdnbSearch(
+  payload: BdnbSearchPayload,
+  orgId?: string,
+  signal?: AbortSignal,
+): Promise<BdnbSearchResult> {
   const endpoint = orgId
     ? `/api/v1/organizations/${orgId}/folders/wizard/bdnb-search`
     : '/api/v1/folders/wizard/bdnb-search';
-  const response = await apiRequest<BdnbSearchResponse>(endpoint, { method: 'POST', body: payload });
+  const response = await apiRequest<BdnbSearchResponse>(endpoint, { method: 'POST', body: payload, signal });
   return response.data;
 }
 
@@ -224,11 +229,15 @@ type SuggestResponse = {
   data: SuggestionsResult;
 };
 
-export async function suggestDiagnostics(payload: SuggestPayload, orgId?: string): Promise<SuggestionsResult> {
+export async function suggestDiagnostics(
+  payload: SuggestPayload,
+  orgId?: string,
+  signal?: AbortSignal,
+): Promise<SuggestionsResult> {
   const endpoint = orgId
     ? `/api/v1/organizations/${orgId}/folders/wizard/suggest`
     : '/api/v1/folders/wizard/suggest';
-  const response = await apiRequest<SuggestResponse>(endpoint, { method: 'POST', body: payload });
+  const response = await apiRequest<SuggestResponse>(endpoint, { method: 'POST', body: payload, signal });
   return response.data;
 }
 
@@ -245,11 +254,15 @@ type GridTotalResponse = {
   data: GridTotalResult;
 };
 
-export async function calculateGridTotal(payload: GridTotalPayload, orgId?: string): Promise<GridTotalResult> {
+export async function calculateGridTotal(
+  payload: GridTotalPayload,
+  orgId?: string,
+  signal?: AbortSignal,
+): Promise<GridTotalResult> {
   const endpoint = orgId
     ? `/api/v1/organizations/${orgId}/folders/wizard/calculate-grid-total`
     : '/api/v1/folders/wizard/calculate-grid-total';
-  const response = await apiRequest<GridTotalResponse>(endpoint, { method: 'POST', body: payload });
+  const response = await apiRequest<GridTotalResponse>(endpoint, { method: 'POST', body: payload, signal });
   return response.data;
 }
 
@@ -374,19 +387,6 @@ function nullIfEmpty(s: string): string | null {
   return s.trim() === '' ? null : s.trim();
 }
 
-function nullableFloat(s: string): number | null {
-  const trimmed = s.trim();
-  if (trimmed === '') return null;
-  const parsed = parseFloat(trimmed);
-  return isNaN(parsed) ? null : parsed;
-}
-
-function nullableInt(s: string): number | null {
-  const trimmed = s.trim();
-  if (trimmed === '') return null;
-  const parsed = parseInt(trimmed, 10);
-  return isNaN(parsed) ? null : parsed;
-}
 
 export function buildSubmitPayload(
   state: WizardState,
@@ -394,19 +394,14 @@ export function buildSubmitPayload(
   sendQuoteToClient: boolean,
   staffMode = false,
 ): WizardSubmitPayload {
-  const exactYearNum = state.exactYear.trim()
-    ? parseInt(state.exactYear.trim(), 10)
-    : null;
+  // `parseDecimal` / `parseInteger` renvoient `null` pour une saisie illisible :
+  // aucun `NaN` (sérialisé en `null` puis rejeté en 422) ne part dans le payload.
   const constructionYear =
-    exactYearNum ??
+    parseInteger(state.exactYear) ??
     (state.yearRange ? YEAR_RANGE_MAP[state.yearRange] : null);
 
-  const surfaceArea = state.surfaceArea.trim()
-    ? parseFloat(state.surfaceArea.trim())
-    : null;
-  const roomCount = state.roomCount.trim()
-    ? parseInt(state.roomCount.trim(), 10)
-    : null;
+  const surfaceArea = parseDecimal(state.surfaceArea);
+  const roomCount = parseInteger(state.roomCount);
 
   let hasGas: boolean | undefined;
   if (state.hasGas === 'oui') hasGas = true;
@@ -508,11 +503,11 @@ export function buildSubmitPayload(
     sendQuoteToClient,
     ...(staffMode
       ? {
-          originalPriceTtc: nullableFloat(state.staffOriginalPriceTtc),
-          finalPriceTtc: nullableFloat(state.staffFinalPriceTtc),
-          discountPercent: nullableFloat(state.staffDiscountPercent),
+          originalPriceTtc: parseDecimal(state.staffOriginalPriceTtc),
+          finalPriceTtc: parseDecimal(state.staffFinalPriceTtc),
+          discountPercent: parseDecimal(state.staffDiscountPercent),
           rdvDate: state.staffRdvDate ?? null,
-          rdvDuration: nullableInt(state.staffRdvDurationMinutes),
+          rdvDuration: parseInteger(state.staffRdvDurationMinutes),
           technicians: state.staffTechnicianIds.length > 0 ? state.staffTechnicianIds : undefined,
         }
       : {}),

@@ -1,5 +1,7 @@
 import { apiRequest, apiUpload } from '@/services/api';
+import type { InvoiceStatus } from '@/services/invoices';
 import { normalizeForSearch } from '@/services/search';
+import type { InterventionStatus } from '@/services/technician';
 
 export type FolderStatus = 'draft' | 'lead' | 'deal' | 'archived';
 
@@ -52,23 +54,8 @@ export type QuoteStatus =
   | 'converted'
   | 'canceled';
 
-export type InvoiceStatus =
-  | 'draft'
-  | 'pending'
-  | 'sent'
-  | 'paid'
-  | 'partially_paid'
-  | 'overdue'
-  | 'cancelled'
-  | 'refunded';
-
-export type InterventionStatus =
-  | 'scheduled'
-  | 'confirmed'
-  | 'in_progress'
-  | 'completed'
-  | 'cancelled'
-  | 'rescheduled';
+export type { InvoiceStatus } from '@/services/invoices';
+export type { InterventionStatus } from '@/services/technician';
 
 export type FolderInterventionSummary = {
   id: string;

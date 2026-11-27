@@ -8,7 +8,7 @@ import {
   type MobotConversationSummary,
 } from '@/services/mobot';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 type ConversationHistoryProps = {
   organizationId: string;
@@ -39,13 +39,23 @@ export function ConversationHistory({
   }, [organizationId]);
 
   async function remove(conversationId: string) {
+    const previous = conversations;
     setConversations((current) => current?.filter((item) => item.id !== conversationId) ?? null);
     try {
       await deleteMobotConversation(organizationId, conversationId);
       onDeleted(conversationId);
     } catch {
-      setError('Suppression impossible. Réessayez.');
+      // On rétablit la liste : l'erreur ne doit pas la remplacer.
+      setConversations(previous);
+      Alert.alert('Suppression impossible', 'Réessayez dans un instant.');
     }
+  }
+
+  function confirmRemove(conversation: MobotConversationSummary) {
+    Alert.alert('Supprimer cette conversation ?', conversation.title, [
+      { text: 'Annuler', style: 'cancel' },
+      { text: 'Supprimer', style: 'destructive', onPress: () => remove(conversation.id) },
+    ]);
   }
 
   if (error) return <ThemedText tone="destructive" style={styles.message}>{error}</ThemedText>;
@@ -78,7 +88,7 @@ export function ConversationHistory({
           </Pressable>
           <Pressable
             hitSlop={10}
-            onPress={() => remove(conversation.id)}
+            onPress={() => confirmRemove(conversation)}
             accessibilityRole="button"
             accessibilityLabel="Supprimer la conversation">
             <IconSymbol size={18} name="trash" color={colors.mutedForeground} />

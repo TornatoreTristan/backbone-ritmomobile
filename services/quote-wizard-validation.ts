@@ -1,9 +1,10 @@
 import * as v from 'valibot';
 import type { WizardState } from '@/contexts/quote-wizard-context';
+import { parseDecimal, parseInteger } from '@/services/quote-wizard-numbers';
 
 const CURRENT_YEAR = new Date().getFullYear();
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const POSTAL_CODE_REGEX = /^\d{5}$/;
+export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const POSTAL_CODE_REGEX = /^\d{5}$/;
 
 const projectTypeValues = [
   'vente',
@@ -65,8 +66,18 @@ const step2Schema = v.looseObject({
 const step3Schema = v.pipe(
   v.looseObject({
     propertyType: nonEmpty('Type de bien requis'),
-    surfaceArea: nonEmpty('Surface requise'),
-    roomCount: nonEmpty('Nombre de pièces requis'),
+    surfaceArea: v.pipe(
+      nonEmpty('Surface requise'),
+      v.check((s) => {
+        const surface = parseDecimal(s);
+        return surface !== null && surface > 0;
+      }, 'Surface invalide : saisissez un nombre supérieur à 0 (ex. 85,5).'),
+    ),
+    // 0 reste accepté : un terrain ou une cave n'a pas de pièce.
+    roomCount: v.pipe(
+      nonEmpty('Nombre de pièces requis'),
+      v.check((s) => parseInteger(s) !== null, 'Nombre de pièces invalide : saisissez un nombre entier.'),
+    ),
     ownershipType: v.nullable(v.string()),
   }),
   v.check(
@@ -92,17 +103,60 @@ const step5Schema = v.looseObject({
 
 const step6Schema = v.looseObject({});
 
-const step7Schema = v.looseObject({});
-
-const step8Schema = v.looseObject({
-  ownerType: nonEmpty('Civilité requise'),
-  contactSearch: nonEmpty('Nom du propriétaire requis'),
-  newContactEmail: optionalEmail,
+const step7Schema = v.looseObject({
+  selectedProductIds: v.pipe(
+    v.array(v.string()),
+    v.minLength(1, 'Sélectionnez au moins un diagnostic.'),
+  ),
 });
 
-const step9Schema = v.looseObject({
-  addressSameAsProperty: v.union([v.literal(true), v.literal(false)], 'Réponse requise'),
-});
+const step8Schema = v.pipe(
+  v.looseObject({
+    ownerType: nonEmpty('Civilité requise'),
+    companyName: v.string(),
+    contactSearch: nonEmpty('Nom du propriétaire requis'),
+    newContactEmail: optionalEmail,
+  }),
+  v.forward(
+    v.check(
+      (s) => s.ownerType !== 'entreprise' || s.companyName.trim() !== '',
+      'Nom de la société requis',
+    ),
+    ['companyName'],
+  ),
+);
+
+// Adresse du propriétaire exigée dès qu'elle diffère de celle du bien : sans
+// elle le dossier part avec une adresse client vide.
+const step9Schema = v.pipe(
+  v.looseObject({
+    addressSameAsProperty: v.union([v.literal(true), v.literal(false)], 'Réponse requise'),
+    newContactAddress: v.string(),
+    newContactPostalCode: v.string(),
+    newContactCity: v.string(),
+  }),
+  v.forward(
+    v.check(
+      (s) => s.addressSameAsProperty || s.newContactAddress.trim() !== '',
+      'Adresse requise',
+    ),
+    ['newContactAddress'],
+  ),
+  v.forward(
+    v.check(
+      (s) => s.addressSameAsProperty || POSTAL_CODE_REGEX.test(s.newContactPostalCode.trim()),
+      'Le code postal doit contenir 5 chiffres.',
+    ),
+    ['newContactPostalCode'],
+  ),
+  v.forward(
+    v.check(
+      (s) => s.addressSameAsProperty || s.newContactCity.trim() !== '',
+      'Ville requise',
+    ),
+    ['newContactCity'],
+  ),
+);
 
 const step10Schema = v.pipe(
   v.looseObject({
@@ -116,9 +170,25 @@ const step10Schema = v.pipe(
   }, 'Contact requis'),
 );
 
-const step11Schema = v.looseObject({
-  billingEmail: optionalEmail,
-});
+// L'email de facturation n'est contrôlé que si la facturation est différente :
+// le champ est masqué sinon, et une valeur invalide restée en mémoire bloquerait
+// « Suivant » sans aucun message visible.
+const step11Schema = v.pipe(
+  v.looseObject({
+    billingDifferent: v.boolean(),
+    billingEmail: v.string(),
+  }),
+  v.forward(
+    v.check(
+      (s) =>
+        !s.billingDifferent ||
+        s.billingEmail.trim() === '' ||
+        EMAIL_REGEX.test(s.billingEmail.trim()),
+      'Adresse email invalide',
+    ),
+    ['billingEmail'],
+  ),
+);
 
 const STEP_SCHEMAS: Record<number, v.GenericSchema<WizardState>> = {
   1: step1Schema as unknown as v.GenericSchema<WizardState>,
@@ -176,7 +246,7 @@ export type AllStepsValidation =
   | { valid: false; firstInvalidStep: number; stepLabel: string; errors: Record<string, string> };
 
 export function validateAllSteps(state: WizardState): AllStepsValidation {
-  for (const step of [1, 2, 3, 4, 5, 8, 9, 10, 11]) {
+  for (const step of [1, 2, 3, 4, 5, 7, 8, 9, 10, 11]) {
     const result = validateStep(step, state);
     if (!result.valid) {
       return {
@@ -188,4 +258,30 @@ export function validateAllSteps(state: WizardState): AllStepsValidation {
     }
   }
   return { valid: true };
+}
+
+/**
+ * Ajustements de prix saisis par le staff (écran « Prix »). Champs optionnels :
+ * seule une valeur renseignée ET illisible ou hors bornes est une erreur — sans
+ * ce contrôle, elle partait tronquée ou était ignorée en silence.
+ */
+export function validateStaffPricing(state: WizardState): ValidationResult {
+  const errors: Record<string, string> = {};
+
+  for (const field of ['staffFinalPriceTtc', 'staffOriginalPriceTtc'] as const) {
+    if (state[field].trim() === '') continue;
+    const price = parseDecimal(state[field]);
+    if (price === null || price < 0) {
+      errors[field] = 'Prix invalide : saisissez un montant positif (ex. 450,50).';
+    }
+  }
+
+  if (state.staffDiscountPercent.trim() !== '') {
+    const discount = parseDecimal(state.staffDiscountPercent);
+    if (discount === null || discount < 0 || discount > 100) {
+      errors.staffDiscountPercent = 'Remise invalide : saisissez un pourcentage entre 0 et 100.';
+    }
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
 }

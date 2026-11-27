@@ -165,3 +165,118 @@ export function formatDayLabel(dateStr: string): string {
   const mm = String(date.getMonth() + 1).padStart(2, '0');
   return `${abbr}. ${dd}/${mm}`;
 }
+
+// ---------------------------------------------------------------------------
+// RDV : affichage et saisie manuelle (heure de Paris, comme les créneaux)
+// ---------------------------------------------------------------------------
+
+const PARIS_TIME_ZONE = 'Europe/Paris';
+
+type WallClock = { year: number; month: number; day: number; hour: number; minute: number };
+
+/** Date et heure « murales » à Paris d'un instant donné. */
+function parisWallClock(date: Date): WallClock {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: PARIS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? NaN);
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+    hour: get('hour'),
+    minute: get('minute'),
+  };
+}
+
+function wallClockAsUtc(w: WallClock): number {
+  return Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute);
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * RDV affiché au récapitulatif : « mer. 10/06/2026 à 09:00 » (heure de Paris).
+ * Renvoie `null` si la valeur n'est pas une date lisible.
+ */
+export function formatRdvDateTime(iso: string): string | null {
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return null;
+  try {
+    const w = parisWallClock(date);
+    const dow = new Date(Date.UTC(w.year, w.month - 1, w.day)).getUTCDay();
+    return `${DAY_ABBR[dow]}. ${pad2(w.day)}/${pad2(w.month)}/${w.year} à ${pad2(w.hour)}:${pad2(w.minute)}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Valeur du champ de saisie manuelle pour un RDV existant : « 10/06/2026 09:00 ». */
+export function formatManualRdv(iso: string | null): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return '';
+  try {
+    const w = parisWallClock(date);
+    return `${pad2(w.day)}/${pad2(w.month)}/${w.year} ${pad2(w.hour)}:${pad2(w.minute)}`;
+  } catch {
+    return '';
+  }
+}
+
+const MANUAL_RDV_PATTERN = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(?:à\s+)?(\d{1,2})[:hH](\d{2})$/;
+
+export type ManualRdvResult = { iso: string } | { error: string };
+
+/**
+ * Lit une saisie manuelle « JJ/MM/AAAA HH:MM » (heure de Paris) et la convertit
+ * en instant ISO 8601 UTC, sans ambiguïté de fuseau côté serveur. Refuse les
+ * dates inexistantes (31/02) et les dates passées.
+ */
+export function parseManualRdv(input: string, now: Date = new Date()): ManualRdvResult {
+  const match = input.trim().match(MANUAL_RDV_PATTERN);
+  if (!match) {
+    return { error: 'Format attendu : JJ/MM/AAAA HH:MM (ex. 10/06/2026 09:00).' };
+  }
+  const wanted: WallClock = {
+    day: Number(match[1]),
+    month: Number(match[2]),
+    year: Number(match[3]),
+    hour: Number(match[4]),
+    minute: Number(match[5]),
+  };
+  if (wanted.month < 1 || wanted.month > 12 || wanted.hour > 23 || wanted.minute > 59) {
+    return { error: 'Date ou heure inexistante.' };
+  }
+
+  // L'heure murale de Paris est d'abord lue comme de l'UTC, puis corrigée du
+  // décalage de Paris à cet instant (deux passes pour les changements d'heure).
+  const wantedAsUtc = wallClockAsUtc(wanted);
+  // `Date.UTC` reporte un jour inexistant sur le mois suivant (31/02 → 03/03).
+  if (new Date(wantedAsUtc).getUTCDate() !== wanted.day) {
+    return { error: 'Date ou heure inexistante.' };
+  }
+  let instant = wantedAsUtc;
+  try {
+    for (let i = 0; i < 2; i++) {
+      instant -= wallClockAsUtc(parisWallClock(new Date(instant))) - wantedAsUtc;
+    }
+    // Une heure sautée au passage à l'heure d'été ne se relit pas à l'identique.
+    if (isNaN(instant) || wallClockAsUtc(parisWallClock(new Date(instant))) !== wantedAsUtc) {
+      return { error: 'Date ou heure inexistante.' };
+    }
+  } catch {
+    return { error: 'Date illisible sur cet appareil. Choisissez un créneau dans la grille.' };
+  }
+  const result = new Date(instant);
+  if (instant <= now.getTime()) {
+    return { error: 'La date du rendez-vous doit être dans le futur.' };
+  }
+  return { iso: result.toISOString() };
+}

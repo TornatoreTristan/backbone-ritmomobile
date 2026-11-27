@@ -1,8 +1,11 @@
 import {
   computeWorkingDays,
   formatDayLabel,
+  formatManualRdv,
+  formatRdvDateTime,
   formatSlotTime,
   intersectSlots,
+  parseManualRdv,
   type TechnicianAvailability,
 } from '@/services/scheduling';
 
@@ -233,5 +236,70 @@ describe('formatDayLabel', () => {
     // 2026-06-13 is a Saturday
     const result = formatDayLabel('2026-06-13');
     expect(result).toBe('sam. 13/06');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RDV : saisie manuelle et affichage (heure de Paris)
+// ---------------------------------------------------------------------------
+
+describe('parseManualRdv', () => {
+  const now = new Date('2026-01-15T12:00:00.000Z');
+
+  it('reads a Paris summer time as an unambiguous UTC instant', () => {
+    expect(parseManualRdv('10/06/2026 09:00', now)).toEqual({ iso: '2026-06-10T07:00:00.000Z' });
+  });
+
+  it('reads a Paris winter time', () => {
+    expect(parseManualRdv('10/02/2026 09:00', now)).toEqual({ iso: '2026-02-10T08:00:00.000Z' });
+  });
+
+  it('accepts the « 9h30 » and single-digit variants', () => {
+    expect(parseManualRdv('5/6/2026 9h30', now)).toEqual({ iso: '2026-06-05T07:30:00.000Z' });
+  });
+
+  it.each(['2026', '2026-06-10T09:00', '10/06/2026', 'demain 9h', '10/06/26 09:00', ''])(
+    'rejects the free-form input %p',
+    (input) => {
+      expect(parseManualRdv(input, now)).toHaveProperty('error');
+    },
+  );
+
+  it.each(['31/02/2026 09:00', '10/13/2026 09:00', '10/06/2026 25:00', '10/06/2026 09:61'])(
+    'rejects the non-existent date %p',
+    (input) => {
+      expect(parseManualRdv(input, now)).toEqual({ error: 'Date ou heure inexistante.' });
+    },
+  );
+
+  it('rejects an hour skipped by the switch to summer time', () => {
+    // 29/03/2026 : 02:00 → 03:00 à Paris, 02:30 n'existe pas.
+    expect(parseManualRdv('29/03/2026 02:30', now)).toEqual({ error: 'Date ou heure inexistante.' });
+  });
+
+  it('rejects a date in the past', () => {
+    expect(parseManualRdv('14/01/2026 09:00', now)).toEqual({
+      error: 'La date du rendez-vous doit être dans le futur.',
+    });
+  });
+});
+
+describe('formatRdvDateTime / formatManualRdv', () => {
+  it('formats the Paris day and time, not the UTC date part', () => {
+    // 22:30 UTC le 9 juin = 00:30 le 10 juin à Paris.
+    expect(formatRdvDateTime('2026-06-09T22:30:00.000Z')).toBe('mer. 10/06/2026 à 00:30');
+    expect(formatManualRdv('2026-06-09T22:30:00.000Z')).toBe('10/06/2026 00:30');
+  });
+
+  it('round-trips with parseManualRdv', () => {
+    const now = new Date('2026-01-15T12:00:00.000Z');
+    const parsed = parseManualRdv('10/06/2026 09:00', now);
+    expect('iso' in parsed && formatManualRdv(parsed.iso)).toBe('10/06/2026 09:00');
+  });
+
+  it('handles unreadable or empty values', () => {
+    expect(formatRdvDateTime('pas une date')).toBeNull();
+    expect(formatManualRdv(null)).toBe('');
+    expect(formatManualRdv('pas une date')).toBe('');
   });
 });

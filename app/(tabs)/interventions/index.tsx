@@ -5,20 +5,18 @@ import { PressableCard } from '@/components/ui/card';
 import { ScreenHeader } from '@/components/screen-header';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { StaleDataNotice } from '@/components/stale-data-notice';
 import { centeredContent } from '@/constants/layout';
+import { INTERVENTION_STATUS_LABELS, INTERVENTION_STATUS_TONE } from '@/constants/status-maps';
+import { useOrganization } from '@/contexts/organization-context';
+import { useScreenResource } from '@/hooks/use-screen-resource';
 import { useColors } from '@/hooks/use-theme-color';
-import {
-  INTERVENTION_STATUS_LABELS,
-  INTERVENTION_STATUS_TONE,
-  type Intervention,
-  listInterventions,
-} from '@/services/technician';
-import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { type Intervention, listInterventions } from '@/services/technician';
+import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
-  FlatList,
   RefreshControl,
+  SectionList,
   StyleSheet,
   View,
 } from 'react-native';
@@ -54,46 +52,46 @@ export default function InterventionsScreen() {
   );
 }
 
+type InterventionSection = { title: string; data: Intervention[] };
+
+function startTime(intervention: Intervention): number {
+  return new Date(intervention.scheduledAt).getTime();
+}
+
+/**
+ * À venir d'abord (de la plus proche à la plus lointaine), puis l'historique
+ * (de la plus récente à la plus ancienne). Une intervention reste « à venir »
+ * jusqu'à la fin de son créneau, sauf si elle est terminée ou annulée.
+ */
+function buildSections(interventions: Intervention[]): InterventionSection[] {
+  const now = Date.now();
+  const upcoming: Intervention[] = [];
+  const past: Intervention[] = [];
+  for (const intervention of interventions) {
+    const end = startTime(intervention) + intervention.durationMinutes * 60_000;
+    const isClosed = intervention.status === 'completed' || intervention.status === 'cancelled';
+    if (!isClosed && end >= now) upcoming.push(intervention);
+    else past.push(intervention);
+  }
+  upcoming.sort((a, b) => startTime(a) - startTime(b));
+  past.sort((a, b) => startTime(b) - startTime(a));
+
+  const sections: InterventionSection[] = [];
+  if (upcoming.length > 0) sections.push({ title: 'À venir', data: upcoming });
+  if (past.length > 0) sections.push({ title: 'Passées', data: past });
+  return sections;
+}
+
 function InterventionsList() {
   const router = useRouter();
   const colors = useColors();
-  const [interventions, setInterventions] = useState<Intervention[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setIsLoading(true);
-    setError(null);
-    try {
-      const data = await listInterventions();
-      setInterventions(data);
-    } catch {
-      setError('Impossible de charger les interventions.');
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load]),
-  );
-
-  const handleRefresh = useCallback(() => {
-    setIsRefreshing(true);
-    load(true);
-  }, [load]);
-
-  const sorted = useMemo(
-    () =>
-      [...interventions].sort(
-        (a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime(),
-      ),
-    [interventions],
-  );
+  const { currentOrganization } = useOrganization();
+  const { data, isLoading, isRefreshing, error, refreshFailed, reload, refresh } =
+    useScreenResource(
+      currentOrganization?.id ?? null,
+      () => listInterventions(),
+      'Impossible de charger les interventions.',
+    );
 
   if (isLoading) {
     return (
@@ -109,34 +107,47 @@ function InterventionsList() {
         <ThemedText tone="destructive" style={styles.errorText}>
           {error}
         </ThemedText>
-        <Button variant="outline" size="sm" onPress={() => load()} style={styles.retry}>
+        <Button variant="outline" size="sm" onPress={reload} style={styles.retry}>
           Réessayer
         </Button>
       </View>
     );
   }
 
+  const sections = buildSections(data ?? []);
+
   return (
-    <FlatList
-      data={sorted}
+    <SectionList
+      sections={sections}
       keyExtractor={(item) => item.id}
+      stickySectionHeadersEnabled={false}
       contentContainerStyle={[
         styles.listContent,
         centeredContent,
-        sorted.length === 0 && styles.listContentEmpty,
+        sections.length === 0 && styles.listContentEmpty,
       ]}
       refreshControl={
         <RefreshControl
           refreshing={isRefreshing}
-          onRefresh={handleRefresh}
+          onRefresh={refresh}
           tintColor={colors.foreground}
         />
       }
+      ListHeaderComponent={<StaleDataNotice visible={refreshFailed} />}
       ListEmptyComponent={
         <View style={styles.center}>
           <ThemedText type="muted">Aucune intervention assignée.</ThemedText>
         </View>
       }
+      renderSectionHeader={({ section }) => (
+        <ThemedText
+          type="label"
+          tone="mutedForeground"
+          style={styles.sectionLabel}
+          accessibilityRole="header">
+          {section.title} · {section.data.length}
+        </ThemedText>
+      )}
       renderItem={({ item }) => (
         <InterventionRow
           intervention={item}
@@ -165,7 +176,7 @@ function InterventionRow({
         </Badge>
       </View>
       <ThemedText type="muted" numberOfLines={1}>
-        {intervention.owner.name}
+        {intervention.owner?.name ?? '—'}
       </ThemedText>
       <ThemedText type="caption" tone="mutedForeground" numberOfLines={1}>
         {intervention.propertyAddress}
@@ -199,6 +210,12 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   listContentEmpty: { flex: 1 },
+  sectionLabel: {
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+    paddingHorizontal: 4,
+    paddingTop: 8,
+  },
   cardTop: {
     flexDirection: 'row',
     alignItems: 'center',

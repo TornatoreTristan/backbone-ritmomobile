@@ -46,6 +46,7 @@ export function PressableCard({
 
   return (
     <Pressable
+      accessibilityRole="button"
       style={(state) => [
         styles.card,
         {

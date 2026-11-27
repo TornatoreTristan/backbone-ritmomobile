@@ -5,10 +5,12 @@ import { Card } from '@/components/ui/card';
 import { ScreenHeader } from '@/components/screen-header';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { StaleDataNotice } from '@/components/stale-data-notice';
 import { centeredContent } from '@/constants/layout';
+import { useOrganization } from '@/contexts/organization-context';
+import { useScreenResource } from '@/hooks/use-screen-resource';
 import { useColors } from '@/hooks/use-theme-color';
 import { type NetworkPartner, type PartnerType, getMyNetworks } from '@/services/networks';
-import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -45,33 +47,14 @@ export default function NetworksScreen() {
 
 function NetworkList() {
   const colors = useColors();
-  const [partners, setPartners] = useState<NetworkPartner[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadNetworks = useCallback(async (silent = false) => {
-    if (!silent) setIsLoading(true);
-    setError(null);
-    try {
-      const data = await getMyNetworks();
-      setPartners(data);
-    } catch {
-      setError('Impossible de charger le réseau.');
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadNetworks();
-  }, [loadNetworks]);
-
-  const handleRefresh = useCallback(() => {
-    setIsRefreshing(true);
-    loadNetworks(true);
-  }, [loadNetworks]);
+  const { currentOrganization } = useOrganization();
+  const { data, isLoading, isRefreshing, error, refreshFailed, reload, refresh } =
+    useScreenResource(
+      currentOrganization?.id ?? null,
+      () => getMyNetworks(),
+      'Impossible de charger le réseau.',
+    );
+  const partners: NetworkPartner[] = data ?? [];
 
   if (isLoading) {
     return (
@@ -87,7 +70,7 @@ function NetworkList() {
         <ThemedText tone="destructive" style={styles.errorText}>
           {error}
         </ThemedText>
-        <Button variant="outline" size="sm" onPress={() => loadNetworks()} style={styles.retry}>
+        <Button variant="outline" size="sm" onPress={reload} style={styles.retry}>
           Réessayer
         </Button>
       </View>
@@ -106,10 +89,11 @@ function NetworkList() {
       refreshControl={
         <RefreshControl
           refreshing={isRefreshing}
-          onRefresh={handleRefresh}
+          onRefresh={refresh}
           tintColor={colors.foreground}
         />
       }
+      ListHeaderComponent={<StaleDataNotice visible={refreshFailed} />}
       ListEmptyComponent={
         <View style={styles.center}>
           <ThemedText type="muted">Personne dans votre réseau pour le moment.</ThemedText>

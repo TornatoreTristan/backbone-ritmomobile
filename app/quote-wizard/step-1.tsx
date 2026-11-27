@@ -5,6 +5,7 @@ import { useQuoteWizard } from '@/contexts/quote-wizard-context';
 import type { ProjectType } from '@/services/quote-wizard';
 import { validateStep } from '@/services/quote-wizard-validation';
 import { useRouter } from 'expo-router';
+import { useRef } from 'react';
 
 const OPTIONS: { value: ProjectType; label: string }[] = [
   { value: 'vente', label: 'Vente' },
@@ -18,9 +19,19 @@ export default function Step1Screen() {
   const router = useRouter();
   const { state, update } = useQuoteWizard();
 
+  // Un double appui sur une carte empilait deux fois l'écran suivant.
+  const lastPushRef = useRef(0);
+
+  function goNext() {
+    const now = Date.now();
+    if (now - lastPushRef.current < 700) return;
+    lastPushRef.current = now;
+    router.push('/quote-wizard/step-2');
+  }
+
   function handleSelect(value: ProjectType) {
     update('projectType', value);
-    router.push('/quote-wizard/step-2');
+    goNext();
   }
 
   return (
@@ -42,7 +53,7 @@ export default function Step1Screen() {
 
       <WizardFooter
         showBack={false}
-        onNext={() => router.push('/quote-wizard/step-2')}
+        onNext={goNext}
         nextDisabled={!validateStep(1, state).valid}
       />
     </>

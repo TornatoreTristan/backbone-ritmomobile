@@ -353,4 +353,62 @@ describe('buildSubmitPayload', () => {
     expect(buildSubmitPayload(state, dummyUser, true).sendQuoteToClient).toBe(true);
     expect(buildSubmitPayload(state, dummyUser, false).sendQuoteToClient).toBe(false);
   });
+
+  describe('numeric fields', () => {
+    const base = { projectType: 'vente' as const, propertyType: 'appartement' };
+
+    it('keeps the decimals of a surface typed with a French comma', () => {
+      const payload = buildSubmitPayload(
+        makeState({ ...base, surfaceArea: '85,5', roomCount: '3' }),
+        dummyUser,
+        false,
+      );
+      expect(payload.surfaceArea).toBe(85.5);
+      expect(payload.roomCount).toBe(3);
+    });
+
+    it('sends null, never NaN, for unreadable numbers', () => {
+      const payload = buildSubmitPayload(
+        makeState({ ...base, surfaceArea: ',', roomCount: 'abc', exactYear: 'x', yearRange: '1975_1989' }),
+        dummyUser,
+        false,
+      );
+      expect(payload.surfaceArea).toBeNull();
+      expect(payload.roomCount).toBeNull();
+      // Une année illisible retombe sur la tranche au lieu de partir en NaN.
+      expect(payload.constructionYear).toBe(1980);
+      expect(JSON.stringify(payload)).not.toContain('NaN');
+    });
+
+    it('reads staff price and discount typed with a comma', () => {
+      const payload = buildSubmitPayload(
+        makeState({
+          ...base,
+          staffFinalPriceTtc: '450,50',
+          staffDiscountPercent: '12,5',
+          staffRdvDurationMinutes: '90',
+          staffRdvDate: '2026-06-10T07:00:00.000Z',
+          staffTechnicianIds: ['u1'],
+        }),
+        dummyUser,
+        false,
+        true,
+      );
+      expect(payload.finalPriceTtc).toBe(450.5);
+      expect(payload.discountPercent).toBe(12.5);
+      expect(payload.originalPriceTtc).toBeNull();
+      expect(payload.rdvDuration).toBe(90);
+      expect(payload.rdvDate).toBe('2026-06-10T07:00:00.000Z');
+      expect(payload.technicians).toEqual(['u1']);
+    });
+
+    it('omits staff fields outside staff mode', () => {
+      const payload = buildSubmitPayload(
+        makeState({ ...base, staffFinalPriceTtc: '450,50' }),
+        dummyUser,
+        false,
+      );
+      expect(payload).not.toHaveProperty('finalPriceTtc');
+    });
+  });
 });

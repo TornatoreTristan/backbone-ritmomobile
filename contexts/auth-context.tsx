@@ -9,6 +9,7 @@ import {
   type StoredUser,
 } from '@/services/auth-storage';
 import { clearCurrentOrgId } from '@/services/organization-storage';
+import { clearWizardState } from '@/services/quote-wizard-storage';
 import { setRoleOverride } from '@/services/role-storage';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import * as Sentry from '@sentry/react-native';
@@ -94,10 +95,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     setOnUnauthorized(() => {
       if (isSigningOutRef.current) return;
-      isSigningOutRef.current = true;
-      signOut().finally(() => {
-        isSigningOutRef.current = false;
-      });
+      signOut();
     });
     return () => setOnUnauthorized(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -241,15 +239,33 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setUser(response.data.user);
   }
 
+  // Tout ce qui est propre à l'utilisateur sur l'appareil, y compris le brouillon
+  // de devis (coordonnées d'un client) qui ne doit pas être proposé au compte suivant.
+  async function clearLocalSession() {
+    await Promise.allSettled([
+      clearAuth(),
+      clearCurrentOrgId(),
+      setRoleOverride(null),
+      clearWizardState(),
+    ]);
+    setUser(null);
+  }
+
   async function signOut() {
+    // Garde posée ici aussi : sans elle, un 401 sur l'appel de logout relançait
+    // une seconde déconnexion via `onUnauthorized`.
+    isSigningOutRef.current = true;
     try {
-      await apiRequest('/api/v1/auth/logout', { method: 'POST' }).catch(() => {});
+      // Délai court : hors-ligne, la déconnexion ne doit pas attendre 30 s.
+      await apiRequest('/api/v1/auth/logout', { method: 'POST', timeoutMs: 5_000 }).catch(
+        () => {},
+      );
       await GoogleSignin.signOut();
     } catch {
       // Continue logout even if requests fail
     } finally {
-      await Promise.all([clearAuth(), clearCurrentOrgId(), setRoleOverride(null)]);
-      setUser(null);
+      await clearLocalSession();
+      isSigningOutRef.current = false;
     }
   }
 
@@ -260,8 +276,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     } catch {
       // ignore — la session locale est purgée juste après
     }
-    await Promise.all([clearAuth(), clearCurrentOrgId(), setRoleOverride(null)]);
-    setUser(null);
+    await clearLocalSession();
   }
 
   return (

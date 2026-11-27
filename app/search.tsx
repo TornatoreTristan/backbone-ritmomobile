@@ -4,25 +4,25 @@ import { SearchBar } from '@/components/ui/search-bar';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { centeredContent } from '@/constants/layout';
-import { useOrganization } from '@/contexts/organization-context';
-import { useColors } from '@/hooks/use-theme-color';
 import {
-  type Folder,
-  type FolderStatus,
-  folderMatchesQuery,
-  getMyFolders,
-} from '@/services/folders';
+  FOLDER_STATUS_LABELS,
+  FOLDER_STATUS_TONE,
+  INTERVENTION_STATUS_LABELS,
+  INTERVENTION_STATUS_TONE,
+} from '@/constants/status-maps';
+import { useOrganization } from '@/contexts/organization-context';
+import { useScreenResource } from '@/hooks/use-screen-resource';
+import { useColors } from '@/hooks/use-theme-color';
+import { type Folder, folderMatchesQuery, getMyFolders } from '@/services/folders';
 import { normalizeForSearch } from '@/services/search';
 import { getOrganizationFolders } from '@/services/staff-folders';
 import {
-  INTERVENTION_STATUS_LABELS,
-  INTERVENTION_STATUS_TONE,
   type Intervention,
-  getPlanning,
   interventionMatchesQuery,
+  listInterventions,
 } from '@/services/technician';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
@@ -34,23 +34,11 @@ import {
 
 type SearchType = 'folders' | 'interventions';
 
-const STATUS_TONE: Record<FolderStatus, 'muted' | 'info' | 'success' | 'secondary'> = {
-  draft: 'muted',
-  lead: 'info',
-  deal: 'success',
-  archived: 'secondary',
-};
-
-const STATUS_LABELS: Record<FolderStatus, string> = {
-  draft: 'Brouillon',
-  lead: 'Prospect',
-  deal: 'Conclu',
-  archived: 'Archivé',
-};
-
+// L'année est affichée : la recherche couvre tout l'historique, pas la semaine.
 const dayMonthFormatter = new Intl.DateTimeFormat('fr-FR', {
   day: '2-digit',
   month: 'short',
+  year: 'numeric',
 });
 
 const timeFormatter = new Intl.DateTimeFormat('fr-FR', {
@@ -78,35 +66,20 @@ function FoldersResults() {
   const router = useRouter();
   const colors = useColors();
   const { isStaff, currentOrganization } = useOrganization();
-  const [folders, setFolders] = useState<Folder[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
 
   const orgId = currentOrganization?.id ?? null;
+  const { data, isLoading, error, reload } = useScreenResource(
+    orgId ? `${isStaff ? 'staff' : 'me'}:${orgId}` : null,
+    () => (isStaff && orgId ? getOrganizationFolders(orgId) : getMyFolders()),
+    'Impossible de charger les dossiers.',
+  );
+  const folders: Folder[] = data ?? [];
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = isStaff && orgId ? await getOrganizationFolders(orgId) : await getMyFolders();
-      setFolders(data);
-    } catch {
-      setError('Impossible de charger les dossiers.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [isStaff, orgId]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const normalizedQuery = useMemo(() => normalizeForSearch(query), [query]);
-  const results = useMemo(() => {
-    if (!normalizedQuery) return folders;
-    return folders.filter((f) => folderMatchesQuery(f, normalizedQuery));
-  }, [folders, normalizedQuery]);
+  const normalizedQuery = normalizeForSearch(query);
+  const results = normalizedQuery
+    ? folders.filter((f) => folderMatchesQuery(f, normalizedQuery))
+    : folders;
 
   return (
     <ResultsLayout
@@ -116,7 +89,7 @@ function FoldersResults() {
       onChangeQuery={setQuery}
       isLoading={isLoading}
       error={error}
-      onRetry={load}
+      onRetry={reload}
       hasQuery={normalizedQuery.length > 0}
       totalCount={folders.length}
       resultsCount={results.length}
@@ -141,37 +114,27 @@ function FoldersResults() {
 function InterventionsResults() {
   const router = useRouter();
   const colors = useColors();
-  const [interventions, setInterventions] = useState<Intervention[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { currentOrganization } = useOrganization();
   const [query, setQuery] = useState('');
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const days = await getPlanning();
-      const flat: Intervention[] = [];
-      for (const day of days) {
-        for (const i of day.interventions) flat.push(i);
-      }
-      setInterventions(flat);
-    } catch {
-      setError('Impossible de charger les interventions.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  // Toutes les interventions du technicien, pas seulement la fenêtre du planning :
+  // une intervention de la semaine passée doit rester trouvable.
+  const { data, isLoading, error, reload } = useScreenResource(
+    currentOrganization?.id ?? null,
+    () => listInterventions(),
+    'Impossible de charger les interventions.',
+  );
+  const interventions: Intervention[] = data ?? [];
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const normalizedQuery = useMemo(() => normalizeForSearch(query), [query]);
-  const results = useMemo(() => {
-    if (!normalizedQuery) return interventions;
-    return interventions.filter((i) => interventionMatchesQuery(i, normalizedQuery));
-  }, [interventions, normalizedQuery]);
+  const normalizedQuery = normalizeForSearch(query);
+  // Les plus récentes d'abord : c'est ce que l'on cherche le plus souvent.
+  const results = (
+    normalizedQuery
+      ? interventions.filter((i) => interventionMatchesQuery(i, normalizedQuery))
+      : interventions
+  )
+    .slice()
+    .sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime());
 
   return (
     <ResultsLayout
@@ -181,7 +144,7 @@ function InterventionsResults() {
       onChangeQuery={setQuery}
       isLoading={isLoading}
       error={error}
-      onRetry={load}
+      onRetry={reload}
       hasQuery={normalizedQuery.length > 0}
       totalCount={interventions.length}
       resultsCount={results.length}
@@ -257,7 +220,7 @@ function ResultsLayout({
           <ThemedText tone="destructive" style={styles.errorText}>
             {error}
           </ThemedText>
-          <Pressable onPress={onRetry} hitSlop={8}>
+          <Pressable onPress={onRetry} hitSlop={8} accessibilityRole="button">
             <ThemedText tone="primary" style={styles.retry}>
               Réessayer
             </ThemedText>
@@ -295,7 +258,9 @@ function FolderResultRow({ folder, onPress }: { folder: Folder; onPress: () => v
         <ThemedText type="defaultSemiBold" style={styles.flex1}>
           #{folder.reference}
         </ThemedText>
-        <Badge tone={STATUS_TONE[folder.status]}>{STATUS_LABELS[folder.status]}</Badge>
+        <Badge tone={FOLDER_STATUS_TONE[folder.status]}>
+          {FOLDER_STATUS_LABELS[folder.status]}
+        </Badge>
       </View>
       <ThemedText type="muted" numberOfLines={1}>
         {folder.clientName}
@@ -325,7 +290,9 @@ function InterventionResultRow({
         </Badge>
       </View>
       <ThemedText type="muted" numberOfLines={1}>
-        {intervention.prestation} · {intervention.owner.name}
+        {intervention.owner?.name
+          ? `${intervention.prestation} · ${intervention.owner.name}`
+          : intervention.prestation}
       </ThemedText>
       <ThemedText type="caption" tone="mutedForeground" numberOfLines={1}>
         {intervention.propertyAddress}

@@ -2,24 +2,27 @@ import { HeaderSearchButton, type SearchTargetType } from '@/components/header-s
 import { OrganizationGate } from '@/components/organization-gate';
 import { Badge } from '@/components/ui/badge';
 import { PressableCard } from '@/components/ui/card';
+import { StaleDataNotice } from '@/components/stale-data-notice';
 import { ScreenHeader } from '@/components/screen-header';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { centeredContent } from '@/constants/layout';
+import {
+  FOLDER_STATUS_LABELS,
+  FOLDER_STATUS_TONE,
+  INTERVENTION_STATUS_LABELS,
+  INTERVENTION_STATUS_TONE,
+} from '@/constants/status-maps';
 import { Radius } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import { useOrganization } from '@/contexts/organization-context';
+import { useScreenResource } from '@/hooks/use-screen-resource';
 import { useColors } from '@/hooks/use-theme-color';
-import { type Folder, type FolderStatus, getMyFolders } from '@/services/folders';
+import { type Folder, getMyFolders } from '@/services/folders';
 import { getOrganizationFolders } from '@/services/staff-folders';
-import {
-  INTERVENTION_STATUS_LABELS,
-  INTERVENTION_STATUS_TONE,
-  type Intervention,
-  listTodayInterventions,
-} from '@/services/technician';
-import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { type Intervention, listTodayInterventions } from '@/services/technician';
+import { useRouter } from 'expo-router';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -30,20 +33,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-const STATUS_TONE: Record<FolderStatus, 'muted' | 'info' | 'success' | 'secondary'> = {
-  draft: 'muted',
-  lead: 'info',
-  deal: 'success',
-  archived: 'secondary',
-};
-
-const STATUS_LABELS: Record<FolderStatus, string> = {
-  draft: 'Brouillon',
-  lead: 'Prospect',
-  deal: 'Conclu',
-  archived: 'Archivé',
-};
 
 /**
  * Un dossier n'est « terminé » que lorsqu'il est réglé (paiement enregistré) ou
@@ -109,39 +98,44 @@ function formatSlot(iso: string, durationMinutes: number): string {
   return `${timeFormatter.format(start)} – ${timeFormatter.format(end)}`;
 }
 
+function isToday(iso: string): boolean {
+  const date = new Date(iso);
+  const now = new Date();
+  return (
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  );
+}
+
+function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <View style={styles.center}>
+      <ThemedText tone="destructive" style={styles.errorText}>
+        {message}
+      </ThemedText>
+      <Pressable onPress={onRetry} hitSlop={8} accessibilityRole="button">
+        <ThemedText tone="primary" style={styles.retry}>
+          Réessayer
+        </ThemedText>
+      </Pressable>
+    </View>
+  );
+}
+
 function TechnicianDashboard() {
   const router = useRouter();
   const colors = useColors();
-  const [interventions, setInterventions] = useState<Intervention[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setIsLoading(true);
-    setError(null);
-    try {
-      const data = await listTodayInterventions();
-      setInterventions(data);
-    } catch (err) {
-      console.warn('[interventions] load failed:', err);
-      setError('Impossible de charger les interventions du jour.');
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load]),
-  );
-
-  const handleRefresh = useCallback(() => {
-    setIsRefreshing(true);
-    load(true);
-  }, [load]);
+  const { currentOrganization } = useOrganization();
+  // L'API reçoit une fenêtre aujourd'hui → demain en dates seules : on ne garde
+  // que les rendez-vous du jour pour que le compteur « AUJOURD'HUI » soit exact.
+  const { data, isLoading, isRefreshing, error, refreshFailed, reload, refresh } =
+    useScreenResource(
+      currentOrganization?.id ?? null,
+      async () => (await listTodayInterventions()).filter((i) => isToday(i.scheduledAt)),
+      'Impossible de charger les interventions du jour.',
+    );
+  const interventions = data ?? [];
 
   if (isLoading) {
     return (
@@ -152,18 +146,7 @@ function TechnicianDashboard() {
   }
 
   if (error) {
-    return (
-      <View style={styles.center}>
-        <ThemedText tone="destructive" style={styles.errorText}>
-          {error}
-        </ThemedText>
-        <Pressable onPress={() => load()} hitSlop={8}>
-          <ThemedText tone="primary" style={styles.retry}>
-            Réessayer
-          </ThemedText>
-        </Pressable>
-      </View>
-    );
+    return <LoadError message={error} onRetry={reload} />;
   }
 
   return (
@@ -172,16 +155,20 @@ function TechnicianDashboard() {
       refreshControl={
         <RefreshControl
           refreshing={isRefreshing}
-          onRefresh={handleRefresh}
+          onRefresh={refresh}
           tintColor={colors.foreground}
         />
       }>
+      <StaleDataNotice visible={refreshFailed} />
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <ThemedText type="label" tone="mutedForeground" style={styles.sectionLabel}>
             AUJOURD&apos;HUI · {interventions.length}
           </ThemedText>
-          <Pressable onPress={() => router.push('/planning')} hitSlop={8}>
+          <Pressable
+            onPress={() => router.push('/planning')}
+            hitSlop={8}
+            accessibilityRole="button">
             <ThemedText
               type="small"
               style={[styles.sectionAction, { color: colors.foreground }]}>
@@ -239,163 +226,65 @@ function TechnicianInterventionRow({
   );
 }
 
+function splitFolders(folders: Folder[]): { active: Folder[]; completed: Folder[] } {
+  const active: Folder[] = [];
+  const completed: Folder[] = [];
+  for (const folder of folders) {
+    if (isFolderCompleted(folder)) completed.push(folder);
+    else active.push(folder);
+  }
+  return { active, completed };
+}
+
 function PartnerDashboard() {
-  const router = useRouter();
-  const colors = useColors();
-  const [folders, setFolders] = useState<Folder[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [showCompleted, setShowCompleted] = useState(false);
-
-  const loadFolders = useCallback(async (silent = false) => {
-    if (!silent) setIsLoading(true);
-    setError(null);
-    try {
-      const data = await getMyFolders();
-      setFolders(data);
-    } catch {
-      setError('Impossible de charger les dossiers.');
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadFolders();
-    }, [loadFolders]),
+  const { currentOrganization } = useOrganization();
+  const resource = useScreenResource(
+    currentOrganization?.id ?? null,
+    () => getMyFolders(),
+    'Impossible de charger les dossiers.',
   );
 
-  const handleRefresh = useCallback(() => {
-    setIsRefreshing(true);
-    loadFolders(true);
-  }, [loadFolders]);
-
-  const { active, completed } = useMemo(() => {
-    const a: Folder[] = [];
-    const c: Folder[] = [];
-    for (const f of folders) {
-      if (isFolderCompleted(f)) c.push(f);
-      else a.push(f);
-    }
-    return { active: a, completed: c };
-  }, [folders]);
-
-  if (isLoading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={colors.foreground} />
-      </View>
-    );
-  }
-
-  if (error) {
-    return (
-      <View style={styles.center}>
-        <ThemedText tone="destructive" style={styles.errorText}>
-          {error}
-        </ThemedText>
-        <Pressable onPress={() => loadFolders()} hitSlop={8}>
-          <ThemedText tone="primary" style={styles.retry}>
-            Réessayer
-          </ThemedText>
-        </Pressable>
-      </View>
-    );
-  }
-
   return (
-    <ScrollView
-      contentContainerStyle={[styles.scrollContent, centeredContent]}
-      refreshControl={
-        <RefreshControl
-          refreshing={isRefreshing}
-          onRefresh={handleRefresh}
-          tintColor={colors.foreground}
-        />
-      }>
-      <NewQuoteCta onPress={() => router.push('/quote-wizard/step-1')} />
-
-      <Section
-        label="EN COURS"
-        count={active.length}
-        items={active}
-        emptyText="Aucun dossier en cours."
-        onPressItem={(id) => router.push(`/folders/${id}`)}
-      />
-
-      {completed.length > 0 ? (
-        <Section
-          label="TERMINÉS"
-          count={completed.length}
-          items={showCompleted ? completed : []}
-          trailingAction={{
-            label: showCompleted ? 'Masquer' : 'Afficher',
-            onPress: () => setShowCompleted((v) => !v),
-          }}
-          onPressItem={(id) => router.push(`/folders/${id}`)}
-        />
-      ) : null}
-    </ScrollView>
+    <FolderDashboard
+      resource={resource}
+      cta={(onPress) => <NewQuoteCta onPress={onPress} />}
+      emptyText="Aucun dossier en cours."
+    />
   );
 }
 
 function StaffDashboard() {
+  const { currentOrganization } = useOrganization();
+  // La clé est l'organisation : au changement d'organisation, les dossiers de la
+  // précédente ne sont plus affichés et sa réponse tardive est ignorée.
+  const resource = useScreenResource(
+    currentOrganization?.id ?? null,
+    (orgId) => getOrganizationFolders(orgId),
+    'Impossible de charger les dossiers.',
+  );
+
+  return (
+    <FolderDashboard
+      resource={resource}
+      cta={(onPress) => <CreateFolderCta onPress={onPress} />}
+      emptyText="Aucun dossier en cours dans l’organisation."
+    />
+  );
+}
+
+function FolderDashboard({
+  resource,
+  cta,
+  emptyText,
+}: {
+  resource: ReturnType<typeof useScreenResource<Folder[]>>;
+  cta: (onPress: () => void) => React.ReactNode;
+  emptyText: string;
+}) {
   const router = useRouter();
   const colors = useColors();
-  const { currentOrganization } = useOrganization();
-  const [folders, setFolders] = useState<Folder[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
-
-  const orgId = currentOrganization?.id;
-
-  const loadFolders = useCallback(
-    async (silent = false) => {
-      if (!orgId) {
-        setIsLoading(false);
-        setIsRefreshing(false);
-        return;
-      }
-      if (!silent) setIsLoading(true);
-      setError(null);
-      try {
-        const data = await getOrganizationFolders(orgId);
-        setFolders(data);
-      } catch {
-        setError('Impossible de charger les dossiers.');
-      } finally {
-        setIsLoading(false);
-        setIsRefreshing(false);
-      }
-    },
-    [orgId],
-  );
-
-  useFocusEffect(
-    useCallback(() => {
-      loadFolders();
-    }, [loadFolders]),
-  );
-
-  const handleRefresh = useCallback(() => {
-    setIsRefreshing(true);
-    loadFolders(true);
-  }, [loadFolders]);
-
-  const { active, completed } = useMemo(() => {
-    const a: Folder[] = [];
-    const c: Folder[] = [];
-    for (const f of folders) {
-      if (isFolderCompleted(f)) c.push(f);
-      else a.push(f);
-    }
-    return { active: a, completed: c };
-  }, [folders]);
+  const { data, isLoading, isRefreshing, error, refreshFailed, reload, refresh } = resource;
 
   if (isLoading) {
     return (
@@ -406,19 +295,10 @@ function StaffDashboard() {
   }
 
   if (error) {
-    return (
-      <View style={styles.center}>
-        <ThemedText tone="destructive" style={styles.errorText}>
-          {error}
-        </ThemedText>
-        <Pressable onPress={() => loadFolders()} hitSlop={8}>
-          <ThemedText tone="primary" style={styles.retry}>
-            Réessayer
-          </ThemedText>
-        </Pressable>
-      </View>
-    );
+    return <LoadError message={error} onRetry={reload} />;
   }
+
+  const { active, completed } = splitFolders(data ?? []);
 
   return (
     <ScrollView
@@ -426,17 +306,19 @@ function StaffDashboard() {
       refreshControl={
         <RefreshControl
           refreshing={isRefreshing}
-          onRefresh={handleRefresh}
+          onRefresh={refresh}
           tintColor={colors.foreground}
         />
       }>
-      <CreateFolderCta onPress={() => router.push('/quote-wizard/step-1')} />
+      {cta(() => router.push('/quote-wizard/step-1'))}
+
+      <StaleDataNotice visible={refreshFailed} />
 
       <Section
         label="EN COURS"
         count={active.length}
         items={active}
-        emptyText="Aucun dossier en cours dans l’organisation."
+        emptyText={emptyText}
         onPressItem={(id) => router.push(`/folders/${id}`)}
       />
 
@@ -545,7 +427,7 @@ function Section({
           {label} · {count}
         </ThemedText>
         {trailingAction ? (
-          <Pressable onPress={trailingAction.onPress} hitSlop={8}>
+          <Pressable onPress={trailingAction.onPress} hitSlop={8} accessibilityRole="button">
             <ThemedText
               type="small"
               style={[styles.sectionAction, { color: colors.foreground }]}>
@@ -598,7 +480,9 @@ function FolderRow({ folder, onPress }: { folder: Folder; onPress: () => void })
         </View>
       ) : null}
       <View style={styles.cardFooter}>
-        <Badge tone={STATUS_TONE[folder.status]}>{STATUS_LABELS[folder.status]}</Badge>
+        <Badge tone={FOLDER_STATUS_TONE[folder.status]}>
+          {FOLDER_STATUS_LABELS[folder.status]}
+        </Badge>
       </View>
     </PressableCard>
   );

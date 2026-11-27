@@ -1,7 +1,7 @@
 import { ThemedText } from '@/components/themed-text';
 import { Radius } from '@/constants/theme';
 import { useColors } from '@/hooks/use-theme-color';
-import { formatDayLabel, formatSlotTime } from '@/services/scheduling';
+import { formatRdvDateTime } from '@/services/scheduling';
 import { StyleSheet, View } from 'react-native';
 
 interface RdvSummaryBarProps {
@@ -32,10 +32,9 @@ export function RdvSummaryBar({ rdvDate, durationMinutes }: RdvSummaryBarProps) 
     );
   }
 
-  // Extract the date part from ISO string for formatDayLabel
-  const datePart = rdvDate.substring(0, 10);
-  const timePart = formatSlotTime(rdvDate);
-  const dayLabel = formatDayLabel(datePart);
+  // Jour et heure lus dans le même fuseau (Paris) : découper la partie date de
+  // l'ISO donnait le jour UTC, faux d'un jour pour un RDV proche de minuit.
+  const label = formatRdvDateTime(rdvDate) ?? rdvDate;
 
   return (
     <View
@@ -44,7 +43,7 @@ export function RdvSummaryBar({ rdvDate, durationMinutes }: RdvSummaryBarProps) 
         { backgroundColor: colors.primary + '12', borderColor: colors.primary },
       ]}>
       <ThemedText style={[styles.summaryText, { color: colors.foreground }]}>
-        RDV : {dayLabel} à {timePart} — {duration} min
+        RDV : {label} — {duration} min
       </ThemedText>
     </View>
   );

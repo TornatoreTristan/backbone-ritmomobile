@@ -4,7 +4,7 @@ import { WizardField } from '@/components/wizard/wizard-field';
 import { WizardFooter } from '@/components/wizard/wizard-footer';
 import { WizardScreen } from '@/components/wizard/wizard-screen';
 import { useQuoteWizard } from '@/contexts/quote-wizard-context';
-import { validateStep } from '@/services/quote-wizard-validation';
+import { POSTAL_CODE_REGEX, validateStep } from '@/services/quote-wizard-validation';
 import { useRouter } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
@@ -53,6 +53,7 @@ export default function Step9Screen() {
 
             <WizardField
               label="Adresse"
+              required
               value={state.newContactAddress}
               onChangeText={(t) => update('newContactAddress', t)}
               placeholder="12 rue de la Paix"
@@ -64,6 +65,13 @@ export default function Step9Screen() {
             <View style={styles.row}>
               <WizardField
                 label="Code postal"
+                required
+                error={
+                  state.newContactPostalCode.trim() !== '' &&
+                  !POSTAL_CODE_REGEX.test(state.newContactPostalCode.trim())
+                    ? '5 chiffres requis'
+                    : null
+                }
                 value={state.newContactPostalCode}
                 onChangeText={(t) => update('newContactPostalCode', t)}
                 placeholder="75001"
@@ -74,6 +82,7 @@ export default function Step9Screen() {
               />
               <WizardField
                 label="Ville"
+                required
                 value={state.newContactCity}
                 onChangeText={(t) => update('newContactCity', t)}
                 placeholder="Paris"

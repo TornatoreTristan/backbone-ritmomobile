@@ -130,6 +130,13 @@ export default function RdvScreen() {
   // Sequence counter for race-condition guard (MAJ-3)
   const fetchIdRef = useRef(0);
 
+  // Critères (techniciens + durée) pour lesquels le créneau courant a été choisi.
+  // Le créneau n'est effacé que si ces critères changent réellement : revenir
+  // sur l'écran ou reprendre un brouillon ne doit pas faire disparaître le RDV.
+  const criteriaKey = `${state.staffTechnicianIds.join(',')}|${state.staffRdvDurationMinutes.trim()}`;
+  const slotCriteriaRef = useRef(criteriaKey);
+
+
   // Load employees once on mount
   useEffect(() => {
     if (!currentOrganization) return;
@@ -153,6 +160,7 @@ export default function RdvScreen() {
     days: string[],
     userIds: string[],
     duration: number,
+    preferredDay: string | null = null,
   ) {
     // MAJ-3: stamp this fetch with a unique id
     fetchIdRef.current += 1;
@@ -176,10 +184,14 @@ export default function RdvScreen() {
         );
         setNoAgendas(allEmpty);
 
-        // Auto-select first day with available slots
+        // Jour du RDV déjà choisi s'il y en a un, sinon premier jour disponible
         const available = buildAvailableDays(data, userIds);
         const firstAvailable = days.find((d) => available.has(d));
-        setSelectedDay(firstAvailable ?? days[0] ?? null);
+        setSelectedDay(
+          preferredDay && days.includes(preferredDay)
+            ? preferredDay
+            : (firstAvailable ?? days[0] ?? null),
+        );
       })
       .catch((err: unknown) => {
         if (fetchIdRef.current !== myFetchId) return;
@@ -209,14 +221,17 @@ export default function RdvScreen() {
 
       if (isNaN(duration) || duration <= 0) return;
 
-      // MAJ-2: reset previously chosen slot before launching the new fetch
-      update('staffRdvDate', null);
+      // MAJ-2: le créneau choisi ne vaut que pour ses techniciens et sa durée.
+      const criteriaChanged = slotCriteriaRef.current !== criteriaKey;
+      slotCriteriaRef.current = criteriaKey;
+      if (criteriaChanged) update('staffRdvDate', null);
 
       doFetchAvailability(
         currentOrganization.id,
         workingDays,
         state.staffTechnicianIds,
         duration,
+        criteriaChanged ? null : (state.staffRdvDate?.substring(0, 10) ?? null),
       );
     }, 500);
 
@@ -422,7 +437,7 @@ export default function RdvScreen() {
         {showManual ? (
           <ManualRdvInput
             value={manualValue}
-            onChangeText={(t) => update('staffRdvDate', t === '' ? null : t)}
+            onChangeText={(iso) => update('staffRdvDate', iso === '' ? null : iso)}
           />
         ) : null}
 

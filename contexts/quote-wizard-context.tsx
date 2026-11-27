@@ -248,6 +248,12 @@ type WizardContextType = {
   update: <K extends keyof WizardState>(field: K, value: WizardState[K]) => void;
   reset: () => void;
   resetAndClear: () => Promise<void>;
+  /**
+   * Efface le brouillon persistant et arrête toute sauvegarde, sans toucher à
+   * l'état affiché. À appeler dès qu'un dossier est créé : le brouillon ne doit
+   * pas survivre si l'app est fermée avant la sortie du wizard.
+   */
+  clearPersistedDraft: () => Promise<void>;
   addDependance: (dep: { id: string; nom: string; superficie: string }) => void;
   removeDependance: (id: string) => void;
   updateDependance: (id: string, patch: Partial<{ nom: string; superficie: string }>) => void;
@@ -268,6 +274,7 @@ const WizardContext = createContext<WizardContextType>({
   update: () => {},
   reset: () => {},
   resetAndClear: async () => {},
+  clearPersistedDraft: async () => {},
   addDependance: () => {},
   removeDependance: () => {},
   updateDependance: () => {},
@@ -286,7 +293,16 @@ export function useQuoteWizard() {
   return useContext(WizardContext);
 }
 
-export function QuoteWizardProvider({ children }: PropsWithChildren) {
+/**
+ * `owner` identifie le propriétaire du brouillon (cf. `wizardDraftOwner`) : le
+ * brouillon est rattaché au couple (utilisateur, organisation), sans quoi il
+ * serait reproposé au compte suivant sur le même appareil. `null` = ni
+ * chargement ni sauvegarde.
+ */
+export function QuoteWizardProvider({
+  children,
+  owner,
+}: PropsWithChildren<{ owner: string | null }>) {
   const [state, setState] = useState<WizardState>(INITIAL_STATE);
   const [hasPendingState, setHasPendingState] = useState(false);
   const [pendingStep, setPendingStep] = useState(1);
@@ -296,20 +312,33 @@ export function QuoteWizardProvider({ children }: PropsWithChildren) {
   const loadedStateRef = useRef<Partial<WizardState> | null>(null);
   const selectedProductIdsRef = useRef(state.selectedProductIds);
   const wasRestoredRef = useRef(false);
+  const persistDisabledRef = useRef(false);
+
+  const ownerRef = useRef(owner);
+
+  useEffect(() => {
+    ownerRef.current = owner;
+  }, [owner]);
 
   useEffect(() => {
     selectedProductIdsRef.current = state.selectedProductIds;
   }, [state.selectedProductIds]);
 
   useEffect(() => {
-    loadWizardState().then((loaded) => {
-      if (loaded) {
+    if (!owner) return;
+    let cancelled = false;
+    loadWizardState(owner)
+      .then((loaded) => {
+        if (cancelled || !loaded) return;
         loadedStateRef.current = loaded.state as Partial<WizardState>;
         setPendingStep(loaded.step);
         setHasPendingState(true);
-      }
-    });
-  }, []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [owner]);
 
   useEffect(() => {
     if (skipNextSaveRef.current) {
@@ -318,7 +347,9 @@ export function QuoteWizardProvider({ children }: PropsWithChildren) {
     }
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
-      saveWizardState(state, currentStepRef.current).catch(() => {});
+      const currentOwner = ownerRef.current;
+      if (!currentOwner || persistDisabledRef.current) return;
+      saveWizardState(state, currentStepRef.current, currentOwner).catch(() => {});
     }, 500);
   }, [state]);
 
@@ -338,10 +369,18 @@ export function QuoteWizardProvider({ children }: PropsWithChildren) {
   }
 
   async function resetAndClear() {
+    persistDisabledRef.current = false;
     skipNextSaveRef.current = true;
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     setState(INITIAL_STATE);
     setHasPendingState(false);
+    loadedStateRef.current = null;
+    await clearWizardState();
+  }
+
+  async function clearPersistedDraft() {
+    persistDisabledRef.current = true;
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     loadedStateRef.current = null;
     await clearWizardState();
   }
@@ -449,6 +488,7 @@ export function QuoteWizardProvider({ children }: PropsWithChildren) {
         update,
         reset,
         resetAndClear,
+        clearPersistedDraft,
         addDependance,
         removeDependance,
         updateDependance,
